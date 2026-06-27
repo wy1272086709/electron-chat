@@ -1,8 +1,12 @@
 import React, { useEffect } from 'react'
 import FriendAvatar from '@renderer/assets/friend_avatar.svg'
+import GroupAvatar from './GroupAvatar'
 import AddFriendModal from './AddFriendModal'
 import AddGroupModal from './AddGroupModal'
 import ContextMenu from './ContextMenu'
+import { chatService } from '@renderer/services/chat.service'
+import { userService } from '@renderer/services/user.service'
+import { secureStorageService } from '@renderer/services/secure-storage.service'
 
 interface Chat {
   id: string
@@ -13,6 +17,7 @@ interface Chat {
   unread?: number
   isOnline?: boolean
   type: 'chat' | 'group'
+  memberCount?: number
 }
 
 interface ChatListProps {
@@ -24,6 +29,8 @@ interface ChatListProps {
   onMarkAsRead?: (chatId: string) => void
   onClearChat?: (chatId: string) => void
   onAddFriend?: (userId: string, reason?: string) => void
+  /** 创建群聊 / 私聊后，通知父组件刷新会话/群聊列表；可带新建房间 ID 以便自动选中 */
+  onRefresh?: (newRoomId?: string) => void
 }
 
 const ChatList: React.FC<ChatListProps> = ({
@@ -34,7 +41,8 @@ const ChatList: React.FC<ChatListProps> = ({
   onDeleteChat,
   onMarkAsRead,
   onClearChat,
-  onAddFriend
+  onAddFriend,
+  onRefresh
 }) => {
   const [isAddFriendModalOpen, setIsAddFriendModalOpen] = React.useState(false)
   const [isAddGroupModalOpen, setIsAddGroupModalOpen] = React.useState(false)
@@ -52,14 +60,11 @@ const ChatList: React.FC<ChatListProps> = ({
     chatName: ''
   })
 
-  // Mock user data for group creation
-  const mockUsers = [
-    { id: 'user1', name: '张三', avatar: '', isOnline: true },
-    { id: 'user2', name: '李四', avatar: '', isOnline: false },
-    { id: 'user3', name: '王五', avatar: '', isOnline: true },
-    { id: 'user4', name: '赵六', avatar: '', isOnline: false },
-    { id: 'user5', name: '钱七', avatar: '', isOnline: true }
-  ]
+  // 可选成员 = 当前用户的好友列表（GET /users/friends），用于创建群聊
+  const [availableUsers, setAvailableUsers] = React.useState<
+    { id: string; name: string; avatar: string; isOnline: boolean }[]
+  >([])
+  const [currentUserId, setCurrentUserId] = React.useState<string>('')
 
   const handleAddFriendModal = (): void => {
     setIsAddFriendModalOpen(true)
@@ -79,6 +84,25 @@ const ChatList: React.FC<ChatListProps> = ({
     }
   }, [activePanel, setIsAddFriendModalOpen, setIsAddGroupModalOpen])
 
+  // 拉取好友列表 + 当前用户 ID，供创建群聊弹窗使用
+  useEffect(() => {
+    ;(async () => {
+      const me = await secureStorageService.getUserInfo()
+      setCurrentUserId(me?.id ?? '')
+      const res = await userService.getFriends()
+      if (res.result && res.data) {
+        setAvailableUsers(
+          res.data.map((u) => ({
+            id: u.id,
+            name: u.nickname || u.username,
+            avatar: u.avatar || '',
+            isOnline: false
+          }))
+        )
+      }
+    })()
+  }, [])
+
   const handleAddFriend = (userId: string, reason?: string): void => {
     if (onAddFriend) {
       onAddFriend(userId, reason)
@@ -86,23 +110,25 @@ const ChatList: React.FC<ChatListProps> = ({
     setIsAddFriendModalOpen(false)
   }
 
-  const handleAddGroup = (selectedUsers: { id: string; name: string; avatar: string; isOnline: boolean }[], groupName: string): void => {
+  // 创建群聊（POST /chat/rooms/group），创建者由后端自动加入，memberIds 仅传其他成员
+  const handleAddGroup = async (
+    selectedUsers: { id: string; name: string; avatar: string; isOnline: boolean }[],
+    groupName: string
+  ): Promise<void> => {
     if (selectedUsers.length === 0) {
       return
     }
-    // Mock group creation - in real app, call API to create group and get new chat ID
-    const newGroupId = `group-${Date.now()}`
-    const newGroup: Chat = {
-      id: newGroupId,
-      name: groupName || `新群聊 (${selectedUsers.map((u) => u.name).join(', ')})`,
-      avatar: '',
-      lastMessage: '',
-      time: new Date().toISOString(),
-      type: 'group'
+    const res = await chatService.createGroupRoom({
+      name: groupName,
+      memberIds: selectedUsers.map((u) => u.id)
+    })
+    // 弹窗内部提交后已自行关闭，这里只负责善后
+    if (res.result && res.data) {
+      onRefresh?.(res.data.id)
+    } else {
+      console.warn('[ChatList] 创建群聊失败:', res.message)
+      alert(res.message || '创建群聊失败')
     }
-    // In real app, you would also need to update the chat list state in MainLayout
-    console.log('创建群聊:', newGroup)
-    setIsAddGroupModalOpen(false)
   }
 
   const handleCloseAddFriendModal: () => void = () => {
@@ -114,11 +140,27 @@ const ChatList: React.FC<ChatListProps> = ({
   }
 
   const formatDate = (time: string): string => {
-    // Mock function - in real app, parse actual date
-    if (time.includes(':')) {
-      return time
+    if (!time) return ''
+    const dt = new Date(time)
+    // 无法解析时（已是展示串，如 "昨天"）原样返回
+    if (isNaN(dt.getTime())) return time
+
+    const now = new Date()
+    const pad = (n: number): string => String(n).padStart(2, '0')
+
+    // 今天：仅显示时分
+    if (dt.toDateString() === now.toDateString()) {
+      return `${pad(dt.getHours())}:${pad(dt.getMinutes())}`
     }
-    return new Date(time).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
+    // 昨天
+    const yesterday = new Date(now)
+    yesterday.setDate(now.getDate() - 1)
+    if (dt.toDateString() === yesterday.toDateString()) return '昨天'
+    // 同年：月日
+    if (dt.getFullYear() === now.getFullYear()) {
+      return `${dt.getMonth() + 1}月${dt.getDate()}日`
+    }
+    return `${dt.getFullYear()}/${pad(dt.getMonth() + 1)}/${pad(dt.getDate())}`
   }
 
   const handleContextMenu = (e: React.MouseEvent, chat: Chat) => {
@@ -193,15 +235,19 @@ const ChatList: React.FC<ChatListProps> = ({
             onContextMenu={(e) => handleContextMenu(e, chat)}
           >
             {/* Avatar */}
-            <div className="chat-avatar">
-              <img
-                src={FriendAvatar}
-                alt={chat.name}
-                onError={(e) => {
-                  e.currentTarget.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(chat.name)}&background=6366f1&color=fff&size=48`
-                }}
-              />
-              {chat.isOnline && (
+            <div className={`chat-avatar ${chat.type === 'group' ? 'is-group' : ''}`}>
+              {chat.type === 'group' ? (
+                <GroupAvatar memberCount={chat.memberCount} />
+              ) : (
+                <img
+                  src={FriendAvatar}
+                  alt={chat.name}
+                  onError={(e) => {
+                    e.currentTarget.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(chat.name)}&background=6366f1&color=fff&size=48`
+                  }}
+                />
+              )}
+              {chat.isOnline && chat.type !== 'group' && (
                 <div
                   className="online-indicator"
                   style={{
@@ -281,13 +327,18 @@ const ChatList: React.FC<ChatListProps> = ({
           onClose={handleCloseAddGroupModal}
           onAddGroup={handleAddGroup}
           visible={true}
-          allUsers={mockUsers}
-          currentUserId="user1" // Mock current user ID
+          allUsers={availableUsers}
+          currentUserId={currentUserId}
         />
       )}
       <style>{`
         .chat-item {
           position: relative;
+        }
+
+        .chat-item .chat-avatar.is-group {
+          border-radius: 8px;
+          background-color: #9db2ce;
         }
 
         .chat-item:hover .chat-actions {

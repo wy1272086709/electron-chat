@@ -4,7 +4,6 @@ import axios from 'axios'
 
 axios.interceptors.response.use(
   (response) => {
-    console.log('[主进程] 响应response:axios', response)
     if (response.status === 200) {
       return response.data
     } else {
@@ -39,12 +38,15 @@ function createWindow(): void {
   const mainWindow = new BrowserWindow({
     width: 900,
     height: 670,
+    minWidth: 830,
+    minHeight: 540,
     show: false,
     autoHideMenuBar: true,
     ...(process.platform === 'linux' && iconPath ? { icon: iconPath } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: false
+      sandbox: false,
+      webSecurity: false
     }
   })
 

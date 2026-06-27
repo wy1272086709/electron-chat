@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react'
 import EmojiPicker from '../components/EmojiPicker'
 import FilePicker from '../components/FilePicker'
+import GroupAvatar from '../components/GroupAvatar'
 
 interface Chat {
   id: string
@@ -11,6 +12,7 @@ interface Chat {
   unread?: number
   isOnline?: boolean
   type: 'chat' | 'group'
+  memberCount?: number
 }
 
 interface Message {
@@ -18,6 +20,7 @@ interface Message {
   content: string
   time: string
   sender: 'me' | 'other'
+  senderName?: string
 }
 
 interface ChatDetailProps {
@@ -79,6 +82,8 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
     return null
   }
 
+  const isGroup = chat.type === 'group'
+
   return (
     <div className="chat-detail">
       {/* Chat Header */}
@@ -92,15 +97,19 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
         )}
 
         <div className="chat-header-info">
-          <div className="chat-avatar">
-            <img
-              src={chat.avatar}
-              alt={chat.name}
-              onError={(e) => {
-                e.currentTarget.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(chat.name)}&background=6366f1&color=fff&size=40`
-              }}
-            />
-            {chat.isOnline && (
+          <div className="chat-avatar" style={isGroup ? { borderRadius: 8 } : undefined}>
+            {isGroup ? (
+              <GroupAvatar memberCount={chat.memberCount} />
+            ) : (
+              <img
+                src={chat.avatar}
+                alt={chat.name}
+                onError={(e) => {
+                  e.currentTarget.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(chat.name)}&background=6366f1&color=fff&size=40`
+                }}
+              />
+            )}
+            {!isGroup && chat.isOnline && (
               <div
                 className="online-indicator"
                 style={{
@@ -117,34 +126,51 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
             )}
           </div>
           <div>
-            <div className="chat-header-name">{chat.name}</div>
-            <div className="chat-status">{chat.isOnline ? '在线' : '离线'}</div>
+            <div className="chat-header-name">
+              {chat.name}
+              {isGroup && chat.memberCount ? ` (${chat.memberCount})` : ''}
+            </div>
+            <div className="chat-status">
+              {isGroup ? `${chat.memberCount ?? 0} 名成员` : chat.isOnline ? '在线' : '离线'}
+            </div>
           </div>
         </div>
       </div>
 
       {/* Messages */}
       <div className="messages-container">
-        {messages.map((message) => (
-          <div
-            key={message.id}
-            className={`message ${message.sender === 'me' ? 'sent' : 'received'}`}
-          >
-            {message.sender === 'other' && (
-              <div className="message-avatar">
-                <img
-                  src={chat.avatar}
-                  alt={chat.name}
-                  onError={(e) => {
-                    e.currentTarget.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(chat.name)}&background=6366f1&color=fff&size=36`
-                  }}
-                />
+        {messages.map((message) => {
+          const senderName = message.senderName || (isGroup ? '群成员' : chat.name)
+          return (
+            <div
+              key={message.id}
+              className={`message ${message.sender === 'me' ? 'sent' : 'received'}`}
+            >
+              {message.sender === 'other' && (
+                <div className="message-avatar">
+                  <img
+                    src={
+                      isGroup
+                        ? `https://ui-avatars.com/api/?name=${encodeURIComponent(senderName)}&background=6366f1&color=fff&size=36`
+                        : chat.avatar
+                    }
+                    alt={senderName}
+                    onError={(e) => {
+                      e.currentTarget.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(senderName)}&background=6366f1&color=fff&size=36`
+                    }}
+                  />
+                </div>
+              )}
+              <div className="message-body">
+                {isGroup && message.sender === 'other' && (
+                  <div className="message-sender">{senderName}</div>
+                )}
+                <div className="message-content">{message.content}</div>
               </div>
-            )}
-            <div className="message-content">{message.content}</div>
-            <div className="message-time">{message.time}</div>
-          </div>
-        ))}
+              <div className="message-time">{message.time}</div>
+            </div>
+          )
+        })}
         <div ref={messagesEndRef} />
       </div>
 
@@ -214,6 +240,26 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
         .chat-status {
           font-size: 12px;
           color: #666;
+        }
+
+        .message-body {
+          display: flex;
+          flex-direction: column;
+          min-width: 0;
+        }
+
+        .message.received .message-body {
+          align-items: flex-start;
+        }
+
+        .message.sent .message-body {
+          align-items: flex-end;
+        }
+
+        .message-sender {
+          font-size: 12px;
+          color: #999;
+          margin: 0 8px 4px;
         }
 
         .online-indicator {

@@ -98,3 +98,115 @@ export interface ChatEvent {
   data: any
   timestamp: number
 }
+
+// ===== 后端接口数据结构（对齐 docs/chat-http-api.md、docs/user-http-api.md）=====
+
+// 用户简要资料（消息发送者 / 房间成员内嵌）
+export interface ChatUserBrief {
+  id: string
+  username: string
+  nickname?: string | null
+  avatarUrl?: string | null
+}
+
+// 会话列表中的成员引用（含对方资料）
+export interface RoomMemberRef {
+  userId: string
+  user: ChatUserBrief
+  role?: 'OWNER' | 'MEMBER'
+  status?: string
+  joinedAt?: string
+  lastReadAt?: string | null
+}
+
+// 会话列表项（GET /chat/rooms）
+export interface Conversation {
+  room: {
+    id: string
+    name: string
+    topic?: string | null // 'GROUP' | 'PRIVATE'，用于区分群/私聊
+    members?: RoomMemberRef[]
+  }
+  role?: 'OWNER' | 'MEMBER'
+  lastReadAt?: string | null
+  clearedAt?: string | null
+  lastMessage?: {
+    id: string
+    content?: string
+    messageType?: string
+    senderId: string
+    createdAt: string
+    sender?: ChatUserBrief
+  } | null
+  unreadCount?: number
+}
+
+// 房间成员（GET /chat/rooms/:roomId/members）
+export interface RoomMember {
+  id: string
+  roomId: string
+  userId: string
+  role: string
+  status: string
+  joinedAt: string
+  lastReadAt?: string | null
+  user?: ChatUserBrief
+}
+
+// 历史消息（GET /chat/rooms/:roomId/messages）
+export interface ChatMessage {
+  id: string
+  roomId: string
+  senderId: string
+  content?: string
+  messageType?: string
+  fileUrl?: string | null
+  fileName?: string | null
+  isDeleted?: boolean
+  createdAt: string
+  sender?: ChatUserBrief
+}
+
+// 清空状态（POST /chat/rooms/:roomId/clear）
+export interface ChatClearState {
+  id: string
+  roomId: string
+  userId: string
+  clearedAt: string
+}
+
+// 创建群聊 / 私聊房间返回结构
+export interface ChatRoomResult {
+  id: string
+  name: string
+  description?: string | null
+  topic?: string | null
+  ownerId?: string
+  createdBy?: string
+  isArchived?: boolean
+  createdAt?: string
+  updatedAt?: string
+  members?: RoomMember[]
+}
+
+// 创建群聊参数
+export interface CreateGroupRoomParams {
+  name: string
+  description?: string
+  memberIds?: string[]
+}
+
+// 群聊列表项（GET /users/groups）
+export interface UserGroup {
+  id: string
+  name: string
+  description?: string | null
+  topic?: string | null
+  ownerId?: string
+  isArchived?: boolean
+  createdAt?: string
+  updatedAt?: string
+  role?: 'OWNER' | 'MEMBER'
+  joinedAt?: string
+  memberCount?: number
+}

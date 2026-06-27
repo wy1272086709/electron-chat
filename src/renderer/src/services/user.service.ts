@@ -7,6 +7,7 @@
 import { request } from './request'
 import type { ElectronResponse } from './request'
 import type { PaginatedResponse, UserInfo } from '../types/api.types'
+import type { UserGroup } from '../types/chat.types'
 
 type LoginResponse = {
   access_token: string
@@ -41,10 +42,11 @@ export const userService = {
    */
   async updateUserInfo(data: {
     nickname?: string
-    avatar?: string
-    bio?: string
+    avatarUrl?: string
+    email?: string
+    username?: string
   }): Promise<ElectronResponse<UserInfo>> {
-    return request.put<UserInfo>('/users/profile', data)
+    return request.post<UserInfo>('/users/saveProfile', data)
   },
 
   /**
@@ -67,12 +69,26 @@ export const userService = {
   /**
    * 搜索好友
    * @param keyword 搜索关键词
-   * @returns Promise<ElectronResponse<PaginatedResponse<UserInfo>>>
+   * @returns Promise<ElectronResponse<UserInfo>>
    */
   async searchFriend(keyword: string) {
-    return request.get<PaginatedResponse<UserInfo>>('/users/searchFriend', {
-      params: { keyword }
-    })
+    return request.post<UserInfo[]>('/users/searchFriend', { query: keyword })
+  },
+
+  /**
+   * 获取好友列表 GET /users/friends
+   * @returns Promise<ElectronResponse<UserInfo[]>>
+   */
+  async getFriends(): Promise<ElectronResponse<UserInfo[]>> {
+    return request.get<UserInfo[]>('/users/friends')
+  },
+
+  /**
+   * 获取群聊列表（含角色与成员数）GET /users/groups
+   * @returns Promise<ElectronResponse<UserGroup[]>>
+   */
+  async getGroups(): Promise<ElectronResponse<UserGroup[]>> {
+    return request.get<UserGroup[]>('/users/groups')
   },
 
   async login(): Promise<ElectronResponse<LoginResponse>> {
@@ -130,6 +146,9 @@ export const userService = {
         lang: 'zh_cn'
       }
     })
+  },
+  async getPresignedUrl(filename: string) {
+    return request.get<{ url: string }>(`/minio/presignedUrl?name=${filename}`)
   }
 }
 

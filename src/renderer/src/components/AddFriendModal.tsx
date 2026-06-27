@@ -27,10 +27,12 @@ const AddFriendModal: React.FC<AddFriendModalProps> = ({ onClose, onAddFriend })
 
   // 使用 searchFriend 接口搜索用户
   useEffect(() => {
-    const searchUsers = async () => {
+    const searchUsers: () => Promise<void> = async () => {
       if (!searchQuery.trim()) {
         setFilteredUsers([])
         setSearchError(null)
+        setSelectedUser(null)
+        setAddReason('')
         return
       }
 
@@ -42,7 +44,7 @@ const AddFriendModal: React.FC<AddFriendModalProps> = ({ onClose, onAddFriend })
 
         if (response.result && response.data) {
           // 转换接口数据格式为组件需要的格式
-          const users: User[] = response.data.list.map((userInfo: UserInfo) => ({
+          const users: User[] = response.data.map((userInfo: UserInfo) => ({
             id: userInfo.id,
             name: userInfo.nickname || userInfo.username || '未知用户',
             avatar: userInfo.avatar || FriendAvatar,
@@ -72,7 +74,7 @@ const AddFriendModal: React.FC<AddFriendModalProps> = ({ onClose, onAddFriend })
     return () => clearTimeout(timer)
   }, [searchQuery])
 
-  const handleAddFriend = () => {
+  const handleAddFriend = (): void => {
     if (selectedUser && onAddFriend) {
       if (!addReason.trim()) {
         alert('请输入打招呼提示')
@@ -81,6 +83,12 @@ const AddFriendModal: React.FC<AddFriendModalProps> = ({ onClose, onAddFriend })
       onAddFriend(selectedUser.id, addReason.trim())
       onClose()
     }
+  }
+
+  const handleSearchQueryChange = (e: React.ChangeEvent<HTMLInputElement>): void => {
+    setSearchQuery(e.target.value)
+    setSelectedUser(null)
+    setAddReason('')
   }
 
   return (
@@ -112,7 +120,7 @@ const AddFriendModal: React.FC<AddFriendModalProps> = ({ onClose, onAddFriend })
             className="search-input"
             placeholder="搜索用户"
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={handleSearchQueryChange}
           />
         </div>
 

@@ -50,21 +50,16 @@ const LoginPage: React.FC = () => {
       console.log('[登录] 请求成功:', response)
 
       if (response.result) {
-        const { user, token } = response.data || {}
+        const { user, access_token } = response.data || {}
 
         // 使用安全存储服务存储用户信息和 token
         await secureStorageService.setLoggedIn(true)
         await secureStorageService.setUserEmail(email)
-        await secureStorageService.setAccessToken(token?.accessToken || '')
+        await secureStorageService.setAccessToken(access_token || '')
 
         // 只在有用户信息时存储
         if (user) {
           await secureStorageService.setUserInfo(user)
-        }
-
-        // 如果有 refreshToken，也保存
-        if (token?.refreshToken) {
-          await secureStorageService.setRefreshToken(token.refreshToken)
         }
 
         // 登录成功后跳转到主页

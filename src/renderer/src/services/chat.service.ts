@@ -1,186 +1,61 @@
 /**
  * 聊天服务
  *
- * 处理聊天会话、消息发送、接收等功能
+ * 对接后端 ChatController（详见 docs/chat-http-api.md）。
+ * baseURL 已含 /api，故以下路径均以 /chat 开头。
+ * 成败统一看返回体的 result 字段。
  */
 
-import { request } from './request'
-import type { ApiResponse, PaginatedResponse } from '../types/api.types'
+import { request, type ElectronResponse } from './request'
 import type {
-  Chat,
-  Message,
-  ChatListItem,
-  SendMessageParams,
-  GetMessagesParams,
+  Conversation,
+  ChatMessage,
+  RoomMember,
+  ChatClearState,
+  ChatRoomResult,
+  CreateGroupRoomParams
 } from '../types/chat.types'
 
 /**
- * 聊天服务类
+ * 聊天服务
  */
 export const chatService = {
-  /**
-   * 获取聊天列表
-   * @returns Promise<ApiResponse<ChatListItem[]>>
-   */
-  async getChatList(): Promise<ApiResponse<ChatListItem[]>> {
-    return request.get<ApiResponse<ChatListItem[]>>('/chats')
+  /** 3.3 会话列表 GET /chat/rooms */
+  async getConversations(): Promise<ElectronResponse<Conversation[]>> {
+    return request.get<Conversation[]>('/chat/rooms')
   },
 
-  /**
-   * 获取单个聊天详情
-   * @param chatId 聊天 ID
-   * @returns Promise<ApiResponse<Chat>>
-   */
-  async getChatDetail(chatId: string): Promise<ApiResponse<Chat>> {
-    return request.get<ApiResponse<Chat>>(`/chats/${chatId}`)
-  },
-
-  /**
-   * 创建聊天
-   * @param data 聊天数据
-   * @returns Promise<ApiResponse<Chat>>
-   */
-  async createChat(data: {
-    type: 'private' | 'group'
-    name?: string
-    memberIds?: string[]
-  }): Promise<ApiResponse<Chat>> {
-    return request.post<ApiResponse<Chat>>('/chats', data)
-  },
-
-  /**
-   * 更新聊天信息
-   * @param chatId 聊天 ID
-   * @param data 更新数据
-   * @returns Promise<ApiResponse<Chat>>
-   */
-  async updateChat(
-    chatId: string,
-    data: { name?: string; avatar?: string }
-  ): Promise<ApiResponse<Chat>> {
-    return request.put<ApiResponse<Chat>>(`/chats/${chatId}`, data)
-  },
-
-  /**
-   * 删除聊天
-   * @param chatId 聊天 ID
-   * @returns Promise<ApiResponse>
-   */
-  async deleteChat(chatId: string): Promise<ApiResponse<null>> {
-    return request.delete<ApiResponse<null>>(`/chats/${chatId}`)
-  },
-
-  /**
-   * 获取消息历史
-   * @param params 获取消息参数
-   * @returns Promise<ApiResponse<PaginatedResponse<Message>>>
-   */
-  async getMessages(
-    params: GetMessagesParams
-  ): Promise<ApiResponse<PaginatedResponse<Message>>> {
-    const { chatId, page = 1, pageSize = 50, beforeTime } = params
-    return request.get<ApiResponse<PaginatedResponse<Message>>>(`/chats/${chatId}/messages`, {
-      params: { page, pageSize, beforeTime },
+  /** 3.4 历史消息 GET /chat/rooms/:roomId/messages?take=（返回 createdAt desc，新的在前） */
+  async getMessages(roomId: string, take = 50): Promise<ElectronResponse<ChatMessage[]>> {
+    return request.get<ChatMessage[]>(`/chat/rooms/${roomId}/messages`, {
+      params: { take }
     })
   },
 
-  /**
-   * 发送消息
-   * @param params 发送消息参数
-   * @returns Promise<ApiResponse<Message>>
-   */
-  async sendMessage(params: SendMessageParams): Promise<ApiResponse<Message>> {
-    const { chatId, ...data } = params
-    return request.post<ApiResponse<Message>>(`/chats/${chatId}/messages`, data)
+  /** 3.5 成员列表 GET /chat/rooms/:roomId/members */
+  async getRoomMembers(roomId: string): Promise<ElectronResponse<RoomMember[]>> {
+    return request.get<RoomMember[]>(`/chat/rooms/${roomId}/members`)
   },
 
-  /**
-   * 撤回消息
-   * @param chatId 聊天 ID
-   * @param messageId 消息 ID
-   * @returns Promise<ApiResponse>
-   */
-  async recallMessage(chatId: string, messageId: string): Promise<ApiResponse<null>> {
-    return request.post<ApiResponse<null>>(`/chats/${chatId}/messages/${messageId}/recall`)
+  /** 3.6 标记已读 POST /chat/rooms/:roomId/read */
+  async markRoomRead(roomId: string): Promise<ElectronResponse<RoomMember>> {
+    return request.post<RoomMember>(`/chat/rooms/${roomId}/read`)
   },
 
-  /**
-   * 删除消息
-   * @param chatId 聊天 ID
-   * @param messageId 消息 ID
-   * @returns Promise<ApiResponse>
-   */
-  async deleteMessage(chatId: string, messageId: string): Promise<ApiResponse<null>> {
-    return request.delete<ApiResponse<null>>(`/chats/${chatId}/messages/${messageId}`)
+  /** 3.7 清空聊天（软清空，仅对当前用户隐藏）POST /chat/rooms/:roomId/clear */
+  async clearRoom(roomId: string): Promise<ElectronResponse<ChatClearState>> {
+    return request.post<ChatClearState>(`/chat/rooms/${roomId}/clear`)
   },
 
-  /**
-   * 标记消息已读
-   * @param chatId 聊天 ID
-   * @param messageId 消息 ID
-   * @returns Promise<ApiResponse>
-   */
-  async markMessageAsRead(chatId: string, messageId: string): Promise<ApiResponse<null>> {
-    return request.post<ApiResponse<null>>(
-      `/chats/${chatId}/messages/${messageId}/read`
-    )
+  /** 3.1 创建群聊 POST /chat/rooms/group */
+  async createGroupRoom(data: CreateGroupRoomParams): Promise<ElectronResponse<ChatRoomResult>> {
+    return request.post<ChatRoomResult>('/chat/rooms/group', data)
   },
 
-  /**
-   * 批量标记消息已读
-   * @param chatId 聊天 ID
-   * @returns Promise<ApiResponse>
-   */
-  async markAllMessagesAsRead(chatId: string): Promise<ApiResponse<null>> {
-    return request.post<ApiResponse<null>>(`/chats/${chatId}/messages/read-all`)
-  },
-
-  /**
-   * 上传文件（图片、文档等）
-   * @param file 文件对象
-   * @param type 文件类型
-   * @returns Promise<ApiResponse<{ url: string }>>
-   */
-  async uploadFile(
-    file: File,
-    type: 'image' | 'document' | 'video' | 'voice'
-  ): Promise<ApiResponse<{ url: string }>> {
-    const formData = new FormData()
-    formData.append('file', file)
-    formData.append('type', type)
-
-    return request.post<ApiResponse<{ url: string }>>('/upload', formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
-    })
-  },
-
-  /**
-   * 获取在线用户列表
-   * @returns Promise<ApiResponse<string[]>>
-   */
-  async getOnlineUsers(): Promise<ApiResponse<string[]>> {
-    return request.get<ApiResponse<string[]>>('/chats/online-users')
-  },
-
-  /**
-   * 添加好友
-   * @param userId 用户 ID
-   * @returns Promise<ApiResponse<Chat>>
-   */
-  async addFriend(userId: string): Promise<ApiResponse<Chat>> {
-    return request.post<ApiResponse<Chat>>('/chats/add-friend', { userId })
-  },
-
-  /**
-   * 移除好友
-   * @param chatId 聊天 ID
-   * @returns Promise<ApiResponse>
-   */
-  async removeFriend(chatId: string): Promise<ApiResponse<null>> {
-    return request.post<ApiResponse<null>>(`/chats/${chatId}/remove-friend`)
-  },
+  /** 3.2 发起 / 获取私聊会话 POST /chat/rooms/private */
+  async createPrivateRoom(receiverId: string): Promise<ElectronResponse<ChatRoomResult>> {
+    return request.post<ChatRoomResult>('/chat/rooms/private', { receiverId })
+  }
 }
 
 export default chatService

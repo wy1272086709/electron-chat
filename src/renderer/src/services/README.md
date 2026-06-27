@@ -98,7 +98,7 @@ const ChatDetail = ({ chatId }: { chatId: string }) => {
         type: 'text',
       })
 
-      if (response.success) {
+      if (response.result) {
         setMessages([...messages, response.data])
         setInputText('')
       }
@@ -137,7 +137,7 @@ const ChatList = () => {
     const fetchChats = async () => {
       try {
         const response = await chatService.getChatList()
-        if (response.success) {
+        if (response.result) {
           setChats(response.data)
         }
       } catch (error) {
@@ -192,7 +192,7 @@ import { chatService } from '../services'
 const handleFileUpload = async (file: File) => {
   try {
     const response = await chatService.uploadFile(file, 'image')
-    if (response.success) {
+    if (response.result) {
       console.log('文件上传成功:', response.data.url)
       // 使用上传后的 URL 发送消息
       await chatService.sendMessage({

@@ -16,6 +16,7 @@ export type { STORAGE_KEYS } from './secure-storage.service'
 export { authService } from './auth.service'
 export { chatService } from './chat.service'
 export { userService } from './user.service'
+export { notificationService } from './notification.service'
 
 // 类型导出
 export type {

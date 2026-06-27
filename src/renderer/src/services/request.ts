@@ -19,6 +19,29 @@ export interface ElectronResponse<T extends AnyType | null> {
   message?: string
 }
 
+// 标志位：防止并发请求在 401 时触发多次跳转
+let isHandlingUnauthorized = false
+
+/**
+ * 处理 401 未授权：清除本地登录态并重定向到登录页
+ * （token 过期或无效时由后端返回 401，经主进程透传 code 后在此统一处理）
+ */
+function handleUnauthorized(): void {
+  if (isHandlingUnauthorized) return
+  isHandlingUnauthorized = true
+  try {
+    secureStorageService.clearAuthData()
+    console.warn('[Request] 登录已过期，正在跳转到登录页')
+    // 项目使用 hash 路由（createHashRouter），直接修改 hash 触发跳转
+    window.location.hash = '/login'
+  } finally {
+    // 稍后重置标志位，允许用户重新登录后再次触发
+    setTimeout(() => {
+      isHandlingUnauthorized = false
+    }, 2000)
+  }
+}
+
 class RequestService {
   private directClient: AxiosInstance
 
@@ -43,7 +66,6 @@ class RequestService {
         if (token) {
           const headers = AxiosHeaders.from(config.headers)
           headers.set('Authorization', `Bearer ${token}`)
-          headers.set('requestToken', token)
           config.headers = headers
         }
         console.log(`[Direct Request] ${config.method?.toUpperCase()} ${config.url}`)
@@ -76,13 +98,13 @@ class RequestService {
    */
   async ipcRequest<T = AnyType>(config: RequestConfig): Promise<ElectronResponse<T>> {
     const token = await secureStorageService.getAccessToken()
-
+    console.log('[IPC Request] Token:', token)
     const requestConfig: AxiosRequestConfig = {
       ...config,
       baseURL: config.baseURL || API_CONFIG.baseURL,
       headers: {
         ...config.headers,
-        ...(token ? { requestToken: token } : {})
+        ...(token ? { Authorization: `Bearer ${token}` } : {})
       }
     }
 
@@ -91,6 +113,12 @@ class RequestService {
       console.log('[IPC Request] Data:', requestConfig.data)
       const response = (await window.api.request(requestConfig)) as unknown as ElectronResponse<T>
       console.log('[IPC Request] Response:', response)
+
+      // 401 未授权：token 过期或无效，清除登录态并跳转登录页
+      if (response.code === 401) {
+        handleUnauthorized()
+      }
+
       return response
     } catch (error: unknown) {
       console.error('[IPC Request] Error:', error)

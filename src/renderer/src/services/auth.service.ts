@@ -17,7 +17,7 @@ export interface LoginParams {
 // 登录响应
 export interface LoginResponse {
   user: UserInfo
-  token: TokenInfo
+  access_token: string
 }
 
 export type RegisterResponse = Pick<UserInfo, 'username' | 'email' | 'nickname'>
