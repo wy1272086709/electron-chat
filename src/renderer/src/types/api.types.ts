@@ -50,6 +50,7 @@ export interface UserInfo {
   nickname: string
   email: string
   avatar?: string
+  avatarUrl?: string | null
   createdAt?: string
   updatedAt?: string
 }

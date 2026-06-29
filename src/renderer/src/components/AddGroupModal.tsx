@@ -1,20 +1,20 @@
-import React, { useState } from 'react';
-import { Input, Avatar, List, Checkbox, Empty } from 'antd';
-import { UserOutlined, GroupOutlined } from '@ant-design/icons';
+import React, { useState } from 'react'
+import { Input, Avatar, List, Checkbox, Empty } from 'antd'
+import { UserOutlined, GroupOutlined } from '@ant-design/icons'
 
 interface User {
-  id: string;
-  name: string;
-  avatar: string;
-  isOnline: boolean;
+  id: string
+  name: string
+  avatar: string
+  isOnline: boolean
 }
 
 interface AddGroupModalProps {
-  visible: boolean;
-  onClose: () => void;
-  onAddGroup: (selectedUsers: User[], groupName: string) => void;
-  allUsers: User[];
-  currentUserId: string;
+  visible: boolean
+  onClose: () => void
+  onAddGroup: (selectedUsers: User[], groupName: string, groupDescription?: string) => void
+  allUsers: User[]
+  currentUserId: string
 }
 
 const AddGroupModal: React.FC<AddGroupModalProps> = ({
@@ -22,49 +22,50 @@ const AddGroupModal: React.FC<AddGroupModalProps> = ({
   onClose,
   onAddGroup,
   allUsers,
-  currentUserId,
+  currentUserId
 }) => {
-  const [groupName, setGroupName] = useState<string>('');
-  const [searchText, setSearchText] = useState<string>('');
-  const [selectedUsers, setSelectedUsers] = useState<User[]>([]);
+  const [groupName, setGroupName] = useState<string>('')
+  const [groupDescription, setGroupDescription] = useState<string>('')
+  const [searchText, setSearchText] = useState<string>('')
+  const [selectedUsers, setSelectedUsers] = useState<User[]>([])
 
   // 过滤除自己外的用户
-  const filteredUsers = allUsers.filter(user => user.id !== currentUserId);
+  const filteredUsers = allUsers.filter((user) => user.id !== currentUserId)
 
   // 根据搜索词过滤用户
-  const searchedUsers = filteredUsers.filter(user =>
+  const searchedUsers = filteredUsers.filter((user) =>
     user.name.toLowerCase().includes(searchText.toLowerCase())
-  );
+  )
 
   // 处理用户选择
-  const handleUserSelect = (user: User, checked: boolean) => {
+  const handleUserSelect = (user: User, checked: boolean): void => {
     if (checked) {
-      setSelectedUsers([...selectedUsers, user]);
+      setSelectedUsers([...selectedUsers, user])
     } else {
-      setSelectedUsers(selectedUsers.filter(u => u.id !== user.id));
+      setSelectedUsers(selectedUsers.filter((u) => u.id !== user.id))
     }
-  };
-
+  }
 
   // 处理创建群聊
-  const handleCreateGroup = () => {
-    if (selectedUsers.length < 2) {
-      alert('请至少选择2个用户');
-      return;
+  const handleCreateGroup = (): void => {
+    if (selectedUsers.length < 1) {
+      alert('请至少选择1位好友')
+      return
     }
     if (!groupName.trim()) {
-      alert('请输入群聊名称');
-      return;
+      alert('请输入群聊名称')
+      return
     }
-    onAddGroup(selectedUsers, groupName);
+    onAddGroup(selectedUsers, groupName.trim(), groupDescription.trim() || undefined)
     // 重置状态
-    setGroupName('');
-    setSelectedUsers([]);
-    setSearchText('');
-    onClose();
-  };
+    setGroupName('')
+    setGroupDescription('')
+    setSelectedUsers([])
+    setSearchText('')
+    onClose()
+  }
 
-  if (!visible) return null;
+  if (!visible) return null
 
   return (
     <div className="add-group-modal">
@@ -74,23 +75,34 @@ const AddGroupModal: React.FC<AddGroupModalProps> = ({
           <h2 className="add-group-title">创建群聊</h2>
           <button className="add-group-close" onClick={onClose}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+              <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
             </svg>
           </button>
         </div>
 
         {/* Group Name Input */}
-        <div className="group-name-section">
+        <div className="group-form-section">
           <h3 className="section-title">群聊名称</h3>
           <div className="group-name-input">
-            <GroupOutlined className="input-icon" />
             <Input
+              allowClear
               placeholder="请输入群聊名称"
               value={groupName}
               onChange={(e) => setGroupName(e.target.value)}
               className="group-name-text"
             />
           </div>
+          <h3 className="section-title group-description-title">群聊简介</h3>
+          <Input.TextArea
+            placeholder="请输入群聊简介"
+            value={groupDescription}
+            onChange={(e) => setGroupDescription(e.target.value)}
+            className="group-description-text"
+            rows={3}
+            allowClear
+            maxLength={120}
+            showCount
+          />
         </div>
 
         <div className="content-wrapper">
@@ -98,6 +110,7 @@ const AddGroupModal: React.FC<AddGroupModalProps> = ({
           <div className="user-list-section">
             <div className="search-input">
               <Input
+                allowClear
                 placeholder="搜索用户"
                 prefix={<UserOutlined />}
                 value={searchText}
@@ -124,9 +137,7 @@ const AddGroupModal: React.FC<AddGroupModalProps> = ({
                     title={
                       <div className="user-item-title">
                         <span className="user-name">{user.name}</span>
-                        {user.isOnline && (
-                          <span className="online-status">在线</span>
-                        )}
+                        {user.isOnline && <span className="online-status">在线</span>}
                       </div>
                     }
                     description={
@@ -153,9 +164,7 @@ const AddGroupModal: React.FC<AddGroupModalProps> = ({
                     <Avatar src={user.avatar} icon={<UserOutlined />} />
                     <div className="user-info">
                       <span className="user-name">{user.name}</span>
-                      {user.isOnline && (
-                        <span className="online-indicator" />
-                      )}
+                      {user.isOnline && <span className="online-indicator" />}
                     </div>
                   </div>
                 ))
@@ -166,16 +175,13 @@ const AddGroupModal: React.FC<AddGroupModalProps> = ({
 
         {/* Actions */}
         <div className="add-group-actions">
-          <button
-            className="action-button secondary"
-            onClick={onClose}
-          >
+          <button className="action-button secondary" onClick={onClose}>
             取消
           </button>
           <button
             className="action-button primary"
             onClick={handleCreateGroup}
-            disabled={selectedUsers.length < 2 || !groupName.trim()}
+            disabled={selectedUsers.length < 1 || !groupName.trim()}
           >
             创建群聊
           </button>
@@ -274,34 +280,40 @@ const AddGroupModal: React.FC<AddGroupModalProps> = ({
         }
 
         .search-input {
+          padding: 0;
           margin-bottom: 24px;
         }
 
-        .search-input .ant-input {
+        .search-input .ant-input-affix-wrapper {
+          width: 100%;
           height: 48px;
           background-color: #2a2b3a;
           border: none;
           border-radius: 12px;
-          padding: 0 16px 0 48px;
-          color: white;
-          font-size: 16px;
+          padding: 0 16px;
           transition: all 0.3s ease;
         }
 
-        .search-input .ant-input:focus {
-          outline: none;
+        .search-input .ant-input-affix-wrapper:hover,
+        .search-input .ant-input-affix-wrapper-focused {
           border-color: var(--gradient-purple-start);
           background-color: rgba(42, 43, 58, 0.9);
           box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.3);
         }
 
-        .search-input .ant-input::placeholder {
+        .search-input .ant-input-affix-wrapper .ant-input {
+          background-color: transparent;
+          color: white;
+          font-size: 16px;
+        }
+
+        .search-input .ant-input-affix-wrapper .ant-input::placeholder {
           color: #666;
         }
 
         .search-input .ant-input-prefix {
-          left: 16px;
           color: #666;
+          margin-right: 8px;
         }
 
         .user-list {
@@ -426,8 +438,12 @@ const AddGroupModal: React.FC<AddGroupModalProps> = ({
           cursor: not-allowed;
         }
 
-        .group-name-section {
+        .group-form-section {
           margin-bottom: 32px;
+        }
+
+        .group-description-title {
+          margin-top: 16px;
         }
 
         .section-title {
@@ -454,28 +470,45 @@ const AddGroupModal: React.FC<AddGroupModalProps> = ({
         .group-name-input .ant-input {
           position: relative;
           height: 48px;
-          background-color: #2a2b3a;
+          background-color: white;
           border: none;
           border-radius: 12px;
           padding: 0 16px 0 48px;
-          color: white;
+          color: #333;
           font-size: 16px;
           transition: all 0.3s ease;
         }
 
-        .group-name-input .ant-input:focus {
+        .group-name-input .ant-input::placeholder {
+          color: #666;
+        }
+
+        .group-description-text.ant-input {
+          background-color: #2a2b3a;
+          border: none;
+          border-radius: 12px;
+          color: white;
+          font-size: 14px;
+          resize: none;
+        }
+
+        .group-description-text.ant-input:focus {
           outline: none;
           border-color: var(--gradient-purple-start);
           background-color: rgba(42, 43, 58, 0.9);
           box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.3);
         }
 
-        .group-name-input .ant-input::placeholder {
+        .group-description-text.ant-input::placeholder {
+          color: #666;
+        }
+
+        .ant-input-textarea-show-count::after {
           color: #666;
         }
       `}</style>
     </div>
-  );
-};
+  )
+}
 
-export default AddGroupModal;
+export default AddGroupModal

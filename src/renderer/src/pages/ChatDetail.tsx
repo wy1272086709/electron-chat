@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react'
 import EmojiPicker from '../components/EmojiPicker'
 import FilePicker from '../components/FilePicker'
 import GroupAvatar from '../components/GroupAvatar'
+import FriendAvatar from '@renderer/assets/friend_avatar.svg'
 
 interface Chat {
   id: string
@@ -83,6 +84,7 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
   }
 
   const isGroup = chat.type === 'group'
+  const headerStatus = isGroup ? `${chat.memberCount ?? 0} 名成员` : '在线'
 
   return (
     <div className="chat-detail">
@@ -96,44 +98,36 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
           </button>
         )}
 
-        <div className="chat-header-info">
-          <div className="chat-avatar" style={isGroup ? { borderRadius: 8 } : undefined}>
+        <div className="chat-header-profile">
+          <div className={`chat-header-avatar ${isGroup ? 'is-group' : ''}`}>
             {isGroup ? (
               <GroupAvatar memberCount={chat.memberCount} />
             ) : (
               <img
-                src={chat.avatar}
+                src={chat.avatar || FriendAvatar}
                 alt={chat.name}
                 onError={(e) => {
                   e.currentTarget.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(chat.name)}&background=6366f1&color=fff&size=40`
                 }}
               />
             )}
-            {!isGroup && chat.isOnline && (
-              <div
-                className="online-indicator"
-                style={{
-                  position: 'absolute',
-                  bottom: 1,
-                  right: 1,
-                  width: 10,
-                  height: 10,
-                  borderRadius: '50%',
-                  backgroundColor: '#10b981',
-                  border: '2px solid #22222b'
-                }}
-              />
-            )}
+            {!isGroup && <div className="chat-header-online-dot" />}
           </div>
-          <div>
+          <div className="chat-header-text">
             <div className="chat-header-name">
               {chat.name}
               {isGroup && chat.memberCount ? ` (${chat.memberCount})` : ''}
             </div>
-            <div className="chat-status">
-              {isGroup ? `${chat.memberCount ?? 0} 名成员` : chat.isOnline ? '在线' : '离线'}
-            </div>
+            <div className={`chat-status ${!isGroup ? 'is-online' : ''}`}>{headerStatus}</div>
           </div>
+        </div>
+
+        <div className="chat-header-actions">
+          <button className="chat-action-button" title="更多">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M5 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm7 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm7 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4z" />
+            </svg>
+          </button>
         </div>
       </div>
 
@@ -152,7 +146,7 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
                     src={
                       isGroup
                         ? `https://ui-avatars.com/api/?name=${encodeURIComponent(senderName)}&background=6366f1&color=fff&size=36`
-                        : chat.avatar
+                        : chat.avatar || FriendAvatar
                     }
                     alt={senderName}
                     onError={(e) => {
@@ -242,6 +236,21 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
           color: #666;
         }
 
+        .chat-status.is-online {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          color: #fff;
+        }
+
+        .chat-status.is-online::before {
+          content: '';
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          background-color: #4cd2c0;
+        }
+
         .message-body {
           display: flex;
           flex-direction: column;
@@ -287,6 +296,21 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
         .send-button:disabled {
           opacity: 0.5;
           cursor: not-allowed;
+        }
+        .chat-header-profile {
+          display: flex;
+        }
+        .chat-header-text {
+          margin-left: 10px;
+        }
+        .chat-header-avatar {
+          width: 44px;
+          height: 44px;
+        }
+        .message-input-container {
+          position: absolute;
+          bottom: 0;
+          width: calc(100% - 360px);
         }
       `}</style>
     </div>

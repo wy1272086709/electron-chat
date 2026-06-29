@@ -76,6 +76,16 @@ export const userService = {
   },
 
   /**
+   * 发起好友申请 POST /users/addFriend
+   * @param receiverId 接收好友申请的用户 ID
+   * @param message 打招呼语
+   * @returns Promise<ElectronResponse<null>>
+   */
+  async addFriend(receiverId: string, message?: string): Promise<ElectronResponse<null>> {
+    return request.post<null>('/users/addFriend', { receiverId, message })
+  },
+
+  /**
    * 获取好友列表 GET /users/friends
    * @returns Promise<ElectronResponse<UserInfo[]>>
    */

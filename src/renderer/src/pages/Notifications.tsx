@@ -1,74 +1,65 @@
 import React, { useState } from 'react'
-
-interface Notification {
-  id: string
-  type: 'add_friend' | 'join_group'
-  title: string
-  description: string
-  time: string
-  read: boolean
-}
+import type { AppNotification, FriendRequestAction } from '@renderer/types/notification.types'
 
 interface NotificationsProps {
-  notifications: Notification[]
+  notifications: AppNotification[]
   onMarkRead: (id: string) => void
   onMarkAllRead: () => void
+  onHandleFriendRequest: (id: string, action: FriendRequestAction) => void
+}
+
+// ISO 时间 → 相对时间（刚刚 / X分钟前 / X小时前 / X天前 / 月日）
+const formatRelativeTime = (iso: string): string => {
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return ''
+  const diff = Date.now() - d.getTime()
+  const sec = Math.floor(diff / 1000)
+  if (sec < 60) return '刚刚'
+  const min = Math.floor(sec / 60)
+  if (min < 60) return `${min}分钟前`
+  const hr = Math.floor(min / 60)
+  if (hr < 24) return `${hr}小时前`
+  const day = Math.floor(hr / 24)
+  if (day < 7) return `${day}天前`
+  return d.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
 }
 
 const Notifications: React.FC<NotificationsProps> = ({
   notifications,
   onMarkRead,
-  onMarkAllRead
+  onMarkAllRead,
+  onHandleFriendRequest
 }) => {
   const [selectedTab, setSelectedTab] = useState<'all' | 'unread'>('all')
 
-  const filteredNotifications = notifications.filter(notification => {
+  const filteredNotifications = notifications.filter((notification) => {
     if (selectedTab === 'unread') {
-      return !notification.read
+      return !notification.isRead
     }
     return true
   })
 
-  const unreadCount = notifications.filter(n => !n.read).length
+  const unreadCount = notifications.filter((n) => !n.isRead).length
 
-  const handleMarkRead = (id: string) => {
-    onMarkRead(id)
-  }
-
-  const handleAcceptFriend = (id: string) => {
-    // In a real app, this would send an API request
-    console.log('Accept friend request:', id)
-    // Mark as read after accepting
-    handleMarkRead(id)
-  }
-
-  const handleDeclineFriend = (id: string) => {
-    // In a real app, this would send an API request
-    console.log('Decline friend request:', id)
-    // Remove from notifications
-    // onMarkRead(id) // or remove entirely
-  }
-
-  const handleJoinGroup = (id: string) => {
-    // In a real app, this would send an API request
-    console.log('Join group:', id)
-    handleMarkRead(id)
-  }
-
-  const formatTime = (time: string) => {
-    // Mock format - in real app, parse actual date
-    if (time.includes('分钟前')) {
-      return time
+  // 点击单条通知：未读则标记已读
+  const handleClick = (notification: AppNotification): void => {
+    if (!notification.isRead) {
+      onMarkRead(notification.id)
     }
-    if (time.includes('小时前')) {
-      return time
-    }
-    return new Date(time).toLocaleDateString('zh-CN', {
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    })
+  }
+
+  const handleAcceptFriend = (id: string): void => {
+    onHandleFriendRequest(id, 'ACCEPTED')
+  }
+
+  const handleDeclineFriend = (id: string): void => {
+    onHandleFriendRequest(id, 'REJECTED')
+  }
+
+  const handleJoinGroup = (): void => {
+    // TODO: 后端暂无「群邀请处理」接口（notification.service 未提供），先给提示
+    console.warn('[Notifications] 群邀请处理接口暂未提供')
+    alert('群邀请处理接口暂未提供')
   }
 
   return (
@@ -98,9 +89,7 @@ const Notifications: React.FC<NotificationsProps> = ({
           onClick={() => setSelectedTab('unread')}
         >
           未读
-          {unreadCount > 0 && (
-            <span className="notification-badge">{unreadCount}</span>
-          )}
+          {unreadCount > 0 && <span className="notification-badge">{unreadCount}</span>}
         </button>
       </div>
 
@@ -114,63 +103,104 @@ const Notifications: React.FC<NotificationsProps> = ({
             <p>暂无通知</p>
           </div>
         ) : (
-          filteredNotifications.map((notification) => (
-            <div
-              key={notification.id}
-              className={`notification-item ${notification.read ? 'read' : ''}`}
-            >
-              {/* Notification Icon */}
-              <div className={`notification-icon ${notification.type === 'add_friend' ? 'add-friend' : 'join-group'}`}>
-                {notification.type === 'add_friend' ? (
-                  <svg viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/>
-                  </svg>
-                ) : (
-                  <svg viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/>
-                  </svg>
-                )}
-              </div>
+          filteredNotifications.map((notification) => {
+            const isFriend = notification.type === 'FRIEND_REQUEST'
+            const senderName =
+              notification.sender?.nickname || notification.sender?.username || '未知用户'
+            const avatarUrl = notification.sender?.avatarUrl || ''
+            const description =
+              (notification.extra?.message || '').trim() ||
+              (isFriend ? '请求添加你为好友' : '邀请你加入群聊')
+            const isPending = notification.result === 'PENDING'
 
-              {/* Notification Content */}
-              <div className="notification-content">
-                <div className="notification-title-row">
-                  <h3 className="notification-title">{notification.title}</h3>
-                  <span className="notification-time">{formatTime(notification.time)}</span>
-                </div>
-                <p className="notification-description">{notification.description}</p>
-              </div>
-
-              {/* Actions */}
-              {!notification.read && (
-                <div className="notification-actions">
-                  {notification.type === 'add_friend' ? (
-                    <div className="friend-request-actions">
-                      <button
-                        className="action-button accept"
-                        onClick={() => handleAcceptFriend(notification.id)}
-                      >
-                        接受
-                      </button>
-                      <button
-                        className="action-button decline"
-                        onClick={() => handleDeclineFriend(notification.id)}
-                      >
-                        拒绝
-                      </button>
-                    </div>
+            return (
+              <div
+                key={notification.id}
+                className={`notification-item ${notification.isRead ? 'read' : ''}`}
+                onClick={() => handleClick(notification)}
+                style={{ cursor: notification.isRead ? 'default' : 'pointer' }}
+              >
+                {/* Notification Icon / Avatar */}
+                <div className={`notification-icon ${isFriend ? 'add-friend' : 'join-group'}`}>
+                  {avatarUrl ? (
+                    <img
+                      src={avatarUrl}
+                      alt=""
+                      className="notification-avatar"
+                      onError={(e) => {
+                        e.currentTarget.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(
+                          senderName
+                        )}&background=6366f1&color=fff&size=48`
+                      }}
+                    />
+                  ) : isFriend ? (
+                    <svg viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/>
+                    </svg>
                   ) : (
-                    <button
-                      className="action-button accept"
-                      onClick={() => handleJoinGroup(notification.id)}
-                    >
-                      加入
-                    </button>
+                    <svg viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/>
+                    </svg>
                   )}
                 </div>
-              )}
-            </div>
-          ))
+
+                {/* Notification Content */}
+                <div className="notification-content">
+                  <div className="notification-title-row">
+                    <h3 className="notification-title">{senderName}</h3>
+                    <span className="notification-time">
+                      {formatRelativeTime(notification.createdAt)}
+                    </span>
+                  </div>
+                  <p className="notification-description">{description}</p>
+                </div>
+
+                {/* Actions / Status */}
+                {isPending ? (
+                  <div className="notification-actions">
+                    {isFriend ? (
+                      <div className="friend-request-actions">
+                        <button
+                          className="action-button accept"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleAcceptFriend(notification.id)
+                          }}
+                        >
+                          接受
+                        </button>
+                        <button
+                          className="action-button decline"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleDeclineFriend(notification.id)
+                          }}
+                        >
+                          拒绝
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        className="action-button accept"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleJoinGroup()
+                        }}
+                      >
+                        加入
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <span
+                    className={`notification-status ${notification.result.toLowerCase()}`}
+                  >
+                    {notification.result === 'ACCEPTED' ? '已接受' : '已拒绝'}
+                  </span>
+                )}
+              </div>
+            )
+          })
         )}
       </div>
 
@@ -249,6 +279,13 @@ const Notifications: React.FC<NotificationsProps> = ({
           color: #666;
         }
 
+        .notification-avatar {
+          width: 40px;
+          height: 40px;
+          border-radius: 50%;
+          object-fit: cover;
+        }
+
         .notification-actions {
           display: flex;
           gap: 8px;
@@ -285,6 +322,25 @@ const Notifications: React.FC<NotificationsProps> = ({
 
         .action-button.decline:hover {
           background-color: #dc2626;
+        }
+
+        .notification-status {
+          align-self: center;
+          margin-left: auto;
+          flex-shrink: 0;
+          padding: 4px 10px;
+          border-radius: 12px;
+          font-size: 12px;
+        }
+
+        .notification-status.accepted {
+          background: rgba(16, 185, 129, 0.15);
+          color: #10b981;
+        }
+
+        .notification-status.rejected {
+          background: rgba(239, 68, 68, 0.15);
+          color: #ef4444;
         }
 
         .empty-notifications {

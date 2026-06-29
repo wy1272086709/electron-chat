@@ -4,8 +4,8 @@ import { useNavigate } from 'react-router-dom'
 import { secureStorageService } from '../services/secure-storage.service'
 
 interface LeftPanelProps {
-  activePanel: 'chat' | 'groups' | 'notifications' | 'favorites'
-  setActivePanel: (panel: 'chat' | 'groups' | 'notifications' | 'favorites') => void
+  activePanel: 'chat' | 'groups' | 'contacts' | 'notifications' | 'favorites'
+  setActivePanel: (panel: 'chat' | 'groups' | 'contacts' | 'notifications' | 'favorites') => void
   unreadCount: number
   setShowProfileModal: (show: boolean) => void
 }
@@ -22,10 +22,10 @@ const LeftPanel: React.FC<LeftPanelProps> = ({
       id: 'chat',
       icon: (
         <svg viewBox="0 0 24 24" fill="currentColor">
-          <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6v-2h14v2zm0-4H6V8h14v4z"/>
+          <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/>
         </svg>
       ),
-      label: '消息'
+      label: '好友'
     },
     {
       id: 'groups',
@@ -35,6 +35,15 @@ const LeftPanel: React.FC<LeftPanelProps> = ({
         </svg>
       ),
       label: '群聊'
+    },
+    {
+      id: 'contacts',
+      icon: (
+        <svg viewBox="0 0 24 24" fill="currentColor">
+          <path d="M20 0H4v2h16V0zM4 24h16v-2H4v2zM20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm-8 2.75c1.24 0 2.25 1.01 2.25 2.25 0 1.24-1.01 2.25-2.25 2.25S9.75 10.24 9.75 9 10.76 6.75 12 6.75zM17 17H7v-1.5c0-1.67 3.33-2.5 5-2.5s5 .83 5 2.5V17z" />
+        </svg>
+      ),
+      label: '通讯录'
     },
     {
       id: 'notifications',

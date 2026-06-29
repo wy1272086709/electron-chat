@@ -2,17 +2,15 @@ import React, { useState, useEffect, useCallback } from 'react'
 import LeftPanel from '../components/LeftPanel'
 import ChatList from '../components/ChatList'
 import ChatDetail from './ChatDetail'
+import Contacts from './Contacts'
 import Notifications from './Notifications'
 import Favorites from './Favorites'
 import ProfileModal from '../components/ProfileModal'
 import { chatService } from '@renderer/services/chat.service'
-import { userService } from '@renderer/services/user.service'
+import { notificationService } from '@renderer/services/notification.service'
 import { secureStorageService } from '@renderer/services/secure-storage.service'
-import type {
-  Conversation,
-  ChatMessage as ServerMessage,
-  UserGroup
-} from '@renderer/types/chat.types'
+import type { Conversation, ChatMessage as ServerMessage } from '@renderer/types/chat.types'
+import type { AppNotification, FriendRequestAction } from '@renderer/types/notification.types'
 
 interface Chat {
   id: string
@@ -33,15 +31,6 @@ interface Message {
   time: string
   sender: 'me' | 'other'
   senderName?: string
-}
-
-interface Notification {
-  id: string
-  type: 'add_friend' | 'join_group'
-  title: string
-  description: string
-  time: string
-  read: boolean
 }
 
 interface Favorite {
@@ -70,13 +59,16 @@ const mapConversation = (c: Conversation, meId: string | null): Chat => {
   const lm = c.lastMessage
   const senderNick = lm?.sender?.nickname || lm?.sender?.username
   const preview = lm?.content ? (isPrivate ? lm.content : `${senderNick || ''}: ${lm.content}`) : ''
+  const unreadCount =
+    typeof c.unreadCount === 'number' && c.unreadCount > 0 ? c.unreadCount : undefined
+
   return {
     id: c.room.id,
     name: isPrivate ? peer?.nickname || peer?.username || c.room.name : c.room.name,
     avatar: isPrivate ? peer?.avatarUrl || '' : '',
     lastMessage: preview,
     time: lm?.createdAt || '',
-    unread: c.unreadCount,
+    unread: unreadCount,
     isOnline: false,
     type: isPrivate ? 'chat' : 'group',
     memberCount: isPrivate ? undefined : c.room.members?.length
@@ -84,9 +76,9 @@ const mapConversation = (c: Conversation, meId: string | null): Chat => {
 }
 
 const MainLayout: React.FC = () => {
-  const [activePanel, setActivePanel] = useState<'chat' | 'groups' | 'notifications' | 'favorites'>(
-    'chat'
-  )
+  const [activePanel, setActivePanel] = useState<
+    'chat' | 'groups' | 'contacts' | 'notifications' | 'favorites'
+  >('chat')
   const [selectedChat, setSelectedChat] = useState<string | null>(null)
   const [showProfileModal, setShowProfileModal] = useState(false)
   const [mobileChatOpen, setMobileChatOpen] = useState(false)
@@ -96,30 +88,12 @@ const MainLayout: React.FC = () => {
   // 当前登录用户 ID（用于区分消息发送方、私聊对方）
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
 
-  // 会话 / 群聊 / 当前房间消息：均由接口获取
+  // 会话（含私聊/群聊，按 type 区分）/ 当前房间消息：均由接口获取
   const [chats, setChats] = useState<Chat[]>([])
-  const [groups, setGroups] = useState<Chat[]>([])
   const [messages, setMessages] = useState<Message[]>([])
 
-  // TODO: 通知中心接口暂未提供，先用本地 mock
-  const [notifications, setNotifications] = useState<Notification[]>([
-    {
-      id: '1',
-      type: 'add_friend',
-      title: '张三',
-      description: '请求添加你为好友',
-      time: '10分钟前',
-      read: false
-    },
-    {
-      id: '2',
-      type: 'join_group',
-      title: '产品团队',
-      description: '你已加入群聊',
-      time: '1小时前',
-      read: true
-    }
-  ])
+  // 通知：由 GET /notifications 获取
+  const [notifications, setNotifications] = useState<AppNotification[]>([])
 
   // TODO: 收藏接口暂未提供，先用本地 mock
   const [favorites] = useState<Favorite[]>([
@@ -152,29 +126,6 @@ const MainLayout: React.FC = () => {
     }
   }, [])
 
-  // 群聊列表（GET /users/groups）
-  const loadGroups = useCallback(async (): Promise<void> => {
-    const res = await userService.getGroups()
-    if (res.result && res.data) {
-      setGroups(
-        res.data.map(
-          (g: UserGroup): Chat => ({
-            id: g.id,
-            name: g.name,
-            avatar: '',
-            lastMessage: '',
-            time: g.updatedAt || '',
-            unread: undefined,
-            type: 'group',
-            memberCount: g.memberCount
-          })
-        )
-      )
-    } else {
-      console.warn('[MainLayout] 加载群聊列表失败:', res.message)
-    }
-  }, [])
-
   // 某房间历史消息（GET /chat/rooms/:roomId/messages）
   const loadMessages = useCallback(async (roomId: string, meId: string | null): Promise<void> => {
     const res = await chatService.getMessages(roomId, 50)
@@ -200,18 +151,31 @@ const MainLayout: React.FC = () => {
     }
   }, [])
 
-  // 创建群聊 / 私聊后刷新列表，可带新建房间 ID 自动选中
-  const handleRefresh = useCallback(
+  // 通知列表（GET /notifications），按 createdAt desc 排序（新→旧）
+  const loadNotifications = useCallback(async (): Promise<void> => {
+    const res = await notificationService.getNotifications()
+    if (res.result && res.data) {
+      const sorted = [...res.data].sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      )
+      setNotifications(sorted)
+    } else {
+      console.warn('[MainLayout] 加载通知列表失败:', res.message)
+    }
+  }, [])
+
+  // 创建群聊后刷新会话列表，并自动选中新群聊
+  const handleRefreshConversations = useCallback(
     async (newRoomId?: string): Promise<void> => {
-      await Promise.all([loadConversations(currentUserId), loadGroups()])
+      await loadConversations(currentUserId)
       if (newRoomId) {
         setSelectedChat(newRoomId)
       }
     },
-    [loadConversations, loadGroups, currentUserId]
+    [loadConversations, currentUserId]
   )
 
-  // 初始化：取当前用户 → 拉会话 + 群聊
+  // 初始化：取当前用户 → 拉会话 + 群聊 + 通知
   useEffect(() => {
     let cancelled = false
     ;(async () => {
@@ -219,12 +183,12 @@ const MainLayout: React.FC = () => {
       if (cancelled) return
       const meId = user?.id ?? null
       setCurrentUserId(meId)
-      await Promise.all([loadConversations(meId), loadGroups()])
+      await Promise.all([loadConversations(meId), loadNotifications()])
     })()
     return () => {
       cancelled = true
     }
-  }, [loadConversations, loadGroups])
+  }, [loadConversations, loadNotifications])
 
   // 选中会话变化 → 加载该房间消息
   useEffect(() => {
@@ -237,14 +201,47 @@ const MainLayout: React.FC = () => {
     })()
   }, [selectedChat, activePanel, currentUserId, loadMessages])
 
-  // ---- 通知（本地）----
-  const markNotificationAsRead = (id: string): void => {
-    setNotifications(notifications.map((n) => (n.id === id ? { ...n, read: true } : n)))
-  }
+  // ---- 通知 ----
 
-  const markAllNotificationsAsRead = (): void => {
-    setNotifications(notifications.map((n) => ({ ...n, read: true })))
-  }
+  // 标记单条已读（POST /notifications/markRead）。返回的是裸记录，需保留原 sender
+  const markNotificationAsRead = useCallback(async (id: string): Promise<void> => {
+    const res = await notificationService.markRead(id)
+    const updated = res.data
+    if (res.result && updated) {
+      setNotifications((prev) =>
+        prev.map((n) => (n.id === id ? { ...n, ...updated, isRead: true, sender: n.sender } : n))
+      )
+    } else {
+      console.warn('[MainLayout] 标记通知已读失败:', res.message)
+    }
+  }, [])
+
+  // 标记全部已读（POST /notifications/markAllRead）
+  const markAllNotificationsAsRead = useCallback(async (): Promise<void> => {
+    const res = await notificationService.markAllRead()
+    if (res.result) {
+      setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })))
+    } else {
+      console.warn('[MainLayout] 标记全部已读失败:', res.message)
+    }
+  }, [])
+
+  // 处理好友申请（POST /notifications/handleFriendRequest）。返回裸记录，保留原 sender
+  const handleFriendRequest = useCallback(
+    async (id: string, action: FriendRequestAction): Promise<void> => {
+      const res = await notificationService.handleFriendRequest(id, action)
+      const updated = res.data
+      if (res.result && updated) {
+        setNotifications((prev) =>
+          prev.map((n) => (n.id === id ? { ...n, ...updated, sender: n.sender } : n))
+        )
+      } else {
+        console.warn('[MainLayout] 处理好友申请失败:', res.message)
+        alert(res.message || '处理好友申请失败')
+      }
+    },
+    []
+  )
 
   // ---- 会话操作 ----
 
@@ -254,7 +251,6 @@ const MainLayout: React.FC = () => {
     setChats((prev) =>
       prev.map((chat) => (chat.id === chatId ? { ...chat, unread: undefined } : chat))
     )
-    setGroups((prev) => prev.map((g) => (g.id === chatId ? { ...g, unread: undefined } : g)))
     const res = await chatService.markRoomRead(chatId)
     if (!res.result) {
       console.warn('[MainLayout] 标记已读失败:', res.message)
@@ -278,7 +274,6 @@ const MainLayout: React.FC = () => {
       return [...prev.filter((c) => c.id !== chatId), target]
     }
     setChats(moveToEnd)
-    setGroups(moveToEnd)
 
     setSelectedChat(chatId)
     setClearedChat(chatId)
@@ -290,35 +285,41 @@ const MainLayout: React.FC = () => {
   // TODO: 后端暂无「删除会话」接口，此处仅本地移除（重载后会恢复）
   const deleteChat = (id: string): void => {
     setChats((prev) => prev.filter((chat) => chat.id !== id))
-    setGroups((prev) => prev.filter((g) => g.id !== id))
     if (selectedChat === id) {
       setSelectedChat(null)
     }
   }
 
-  // TODO: 后端暂无「添加好友」接口，此处仅生成本地通知
-  const addFriend = (chatId: string): void => {
-    const chat = chats.find((c) => c.id === chatId)
-    if (chat) {
-      const newNotification: Notification = {
-        id: `friend-request-${Date.now()}`,
-        type: 'add_friend',
-        title: chat.name,
-        description: `向 ${chat.name} 发送好友请求`,
-        time: '刚刚',
-        read: false
+  // 通讯录：发起 / 打开与某好友的私聊 POST /chat/rooms/private
+  // 创建（或复用）私聊房间后，刷新会话列表并切换到「好友消息」面板自动选中
+  const startChatWithFriend = useCallback(
+    async (userId: string): Promise<void> => {
+      const res = await chatService.createPrivateRoom(userId)
+      if (res.result && res.data) {
+        const roomId = res.data.id
+        await loadConversations(currentUserId)
+        setActivePanel('chat')
+        setSelectedChat(roomId)
+      } else {
+        console.warn('[MainLayout] 发起私聊失败:', res.message)
+        alert(res.message || '发起私聊失败')
       }
-      setNotifications([newNotification, ...notifications])
-      console.log(`Friend request sent to ${chat.name}`)
-    }
-  }
+    },
+    [loadConversations, currentUserId]
+  )
+
+  // 好友面板：私聊会话；群聊面板：群聊会话（均来自 /chat/rooms，按 type 筛选）
+  const friendChats = chats.filter((c) => c.type === 'chat')
+  const groupChats = chats.filter((c) => c.type === 'group')
 
   const getUnreadCount = (): number => {
     return chats.reduce((total, chat) => total + (chat.unread || 0), 0)
   }
 
   // 切换左栏面板时重置选中状态，避免上一面板的 selectedChat 在新面板里 find 不到对应会话
-  const handlePanelChange = (panel: 'chat' | 'groups' | 'notifications' | 'favorites'): void => {
+  const handlePanelChange = (
+    panel: 'chat' | 'groups' | 'contacts' | 'notifications' | 'favorites'
+  ): void => {
     if (panel !== activePanel) {
       setSelectedChat(null)
     }
@@ -379,33 +380,23 @@ const MainLayout: React.FC = () => {
         (activePanel === 'chat' || activePanel === 'groups') && (
           <div className="center-panel">
             <ChatList
-              chats={activePanel === 'chat' ? chats : groups}
+              chats={activePanel === 'chat' ? friendChats : groupChats}
               activePanel={activePanel}
               selectedChat={selectedChat}
               onChatSelect={handleChatSelect}
               onDeleteChat={deleteChat}
               onMarkAsRead={markChatAsRead}
               onClearChat={clearChatMessages}
-              onAddFriend={addFriend}
-              onRefresh={handleRefresh}
+              onRefresh={handleRefreshConversations}
             />
           </div>
         )}
 
       {/* Right Panel - Chat Detail or Content Panels */}
       <div className={`right-panel ${mobileDetailOpen ? 'active' : ''}`}>
-        {activePanel === 'chat' && selectedChat && (
+        {(activePanel === 'chat' || activePanel === 'groups') && selectedChat && (
           <ChatDetail
             chat={chats.find((c) => c.id === selectedChat)}
-            messages={messages.filter((m) => m.chatId === selectedChat)}
-            onBack={handleBackToList}
-            isMobile={window.innerWidth <= 768}
-            onCleared={clearedChat === selectedChat}
-          />
-        )}
-        {activePanel === 'groups' && selectedChat && (
-          <ChatDetail
-            chat={groups.find((c) => c.id === selectedChat)}
             messages={messages.filter((m) => m.chatId === selectedChat)}
             onBack={handleBackToList}
             isMobile={window.innerWidth <= 768}
@@ -417,12 +408,14 @@ const MainLayout: React.FC = () => {
             notifications={notifications}
             onMarkRead={markNotificationAsRead}
             onMarkAllRead={markAllNotificationsAsRead}
+            onHandleFriendRequest={handleFriendRequest}
           />
         )}
+        {activePanel === 'contacts' && <Contacts onStartChat={startChatWithFriend} />}
         {activePanel === 'favorites' && <Favorites favorites={favorites} />}
         {activePanel === 'chat' && !selectedChat && (
           <div className="empty-chat-detail">
-            <p>选择一个聊天开始对话</p>
+            <p>选择一位好友开始对话</p>
           </div>
         )}
         {activePanel === 'groups' && !selectedChat && (

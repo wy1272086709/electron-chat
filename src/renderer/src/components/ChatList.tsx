@@ -1,12 +1,11 @@
-import React, { useEffect } from 'react'
+import React from 'react'
 import FriendAvatar from '@renderer/assets/friend_avatar.svg'
 import GroupAvatar from './GroupAvatar'
-import AddFriendModal from './AddFriendModal'
 import AddGroupModal from './AddGroupModal'
 import ContextMenu from './ContextMenu'
 import { chatService } from '@renderer/services/chat.service'
-import { userService } from '@renderer/services/user.service'
 import { secureStorageService } from '@renderer/services/secure-storage.service'
+import { userService } from '@renderer/services/user.service'
 
 interface Chat {
   id: string
@@ -28,8 +27,6 @@ interface ChatListProps {
   onDeleteChat: (chatId: string) => void
   onMarkAsRead?: (chatId: string) => void
   onClearChat?: (chatId: string) => void
-  onAddFriend?: (userId: string, reason?: string) => void
-  /** 创建群聊 / 私聊后，通知父组件刷新会话/群聊列表；可带新建房间 ID 以便自动选中 */
   onRefresh?: (newRoomId?: string) => void
 }
 
@@ -41,10 +38,8 @@ const ChatList: React.FC<ChatListProps> = ({
   onDeleteChat,
   onMarkAsRead,
   onClearChat,
-  onAddFriend,
   onRefresh
 }) => {
-  const [isAddFriendModalOpen, setIsAddFriendModalOpen] = React.useState(false)
   const [isAddGroupModalOpen, setIsAddGroupModalOpen] = React.useState(false)
   const [contextMenu, setContextMenu] = React.useState<{
     visible: boolean
@@ -59,84 +54,29 @@ const ChatList: React.FC<ChatListProps> = ({
     chatId: '',
     chatName: ''
   })
-
-  // 可选成员 = 当前用户的好友列表（GET /users/friends），用于创建群聊
   const [availableUsers, setAvailableUsers] = React.useState<
     { id: string; name: string; avatar: string; isOnline: boolean }[]
   >([])
   const [currentUserId, setCurrentUserId] = React.useState<string>('')
 
-  const handleAddFriendModal = (): void => {
-    setIsAddFriendModalOpen(true)
-    setIsAddGroupModalOpen(false)
-  }
-
-  const handleAddGroupModal = (): void => {
-    setIsAddGroupModalOpen(true)
-    setIsAddFriendModalOpen(false)
-  }
-
-  useEffect(() => {
-    if (!['chat', 'groups'].includes(activePanel)) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setIsAddFriendModalOpen(false)
-      setIsAddGroupModalOpen(false)
-    }
-  }, [activePanel, setIsAddFriendModalOpen, setIsAddGroupModalOpen])
-
-  // 拉取好友列表 + 当前用户 ID，供创建群聊弹窗使用
-  useEffect(() => {
-    ;(async () => {
-      const me = await secureStorageService.getUserInfo()
-      setCurrentUserId(me?.id ?? '')
-      const res = await userService.getFriends()
-      if (res.result && res.data) {
-        setAvailableUsers(
-          res.data.map((u) => ({
-            id: u.id,
-            name: u.nickname || u.username,
-            avatar: u.avatar || '',
-            isOnline: false
-          }))
-        )
-      }
-    })()
-  }, [])
-
-  const handleAddFriend = (userId: string, reason?: string): void => {
-    if (onAddFriend) {
-      onAddFriend(userId, reason)
-    }
-    setIsAddFriendModalOpen(false)
-  }
-
-  // 创建群聊（POST /chat/rooms/group），创建者由后端自动加入，memberIds 仅传其他成员
-  const handleAddGroup = async (
-    selectedUsers: { id: string; name: string; avatar: string; isOnline: boolean }[],
-    groupName: string
-  ): Promise<void> => {
-    if (selectedUsers.length === 0) {
-      return
-    }
-    const res = await chatService.createGroupRoom({
-      name: groupName,
-      memberIds: selectedUsers.map((u) => u.id)
-    })
-    // 弹窗内部提交后已自行关闭，这里只负责善后
+  const openAddGroupModal = async (): Promise<void> => {
+    const me = await secureStorageService.getUserInfo()
+    setCurrentUserId(me?.id ?? '')
+    const res = await userService.getFriends()
     if (res.result && res.data) {
-      onRefresh?.(res.data.id)
+      setAvailableUsers(
+        res.data.map((u) => ({
+          id: u.id,
+          name: u.nickname || u.username,
+          avatar: u.avatar || u.avatarUrl || '',
+          isOnline: false
+        }))
+      )
     } else {
-      console.warn('[ChatList] 创建群聊失败:', res.message)
-      alert(res.message || '创建群聊失败')
+      setAvailableUsers([])
+      console.warn('[ChatList] 加载好友列表失败:', res.message)
     }
-  }
-
-  const handleCloseAddFriendModal: () => void = () => {
-    setIsAddFriendModalOpen(false)
-  }
-
-  const handleCloseAddGroupModal: () => void = () => {
-    setIsAddGroupModalOpen(false)
+    setIsAddGroupModalOpen(true)
   }
 
   const formatDate = (time: string): string => {
@@ -163,7 +103,7 @@ const ChatList: React.FC<ChatListProps> = ({
     return `${dt.getFullYear()}/${pad(dt.getMonth() + 1)}/${pad(dt.getDate())}`
   }
 
-  const handleContextMenu = (e: React.MouseEvent, chat: Chat) => {
+  const handleContextMenu = (e: React.MouseEvent, chat: Chat): void => {
     e.preventDefault()
     e.stopPropagation()
     setContextMenu({
@@ -175,7 +115,7 @@ const ChatList: React.FC<ChatListProps> = ({
     })
   }
 
-  const closeContextMenu = () => {
+  const closeContextMenu = (): void => {
     setContextMenu({
       visible: false,
       x: 0,
@@ -185,36 +125,46 @@ const ChatList: React.FC<ChatListProps> = ({
     })
   }
 
+  const getUnreadCount = (unread?: number): number => {
+    return typeof unread === 'number' && unread > 0 ? unread : 0
+  }
+
+  const handleAddGroup = async (
+    selectedUsers: { id: string; name: string; avatar: string; isOnline: boolean }[],
+    groupName: string,
+    groupDescription?: string
+  ): Promise<void> => {
+    const res = await chatService.createGroupRoom({
+      name: groupName,
+      description: groupDescription?.trim() || undefined,
+      memberIds: selectedUsers.map((u) => u.id)
+    })
+    if (res.result && res.data) {
+      onRefresh?.(res.data.id)
+    } else {
+      console.warn('[ChatList] 创建群聊失败:', res.message)
+      alert(res.message || '创建群聊失败')
+    }
+  }
+
   return (
     <div className="center-panel-inner">
       {/* Header */}
       <div className="panel-header flex items-center justify-between">
         <h2>消息</h2>
-        <button
-          className="cursor-pointer"
-          onClick={activePanel === 'chat' ? handleAddFriendModal : handleAddGroupModal}
-          style={{
-            width: 32,
-            height: 32,
-            borderRadius: '50%',
-            border: 'none',
-            color: 'white',
-            fontSize: 20,
-            fontWeight: 'bold',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            cursor: 'pointer',
-            transition: 'all 0.2s ease',
-            boxShadow: '0 2px 4px rgba(0, 0, 0, 0.1)',
-            position: 'relative'
-          }}
-          title={activePanel === 'chat' ? '添加好友' : '添加群聊'}
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ margin: 0 }}>
-            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11h-4v4h-2v-4H7v-2h4V7h2v4h4v2z" />
-          </svg>
-        </button>
+        {activePanel === 'groups' && (
+          <button
+            className="chat-list-create-button"
+            onClick={() => {
+              void openAddGroupModal()
+            }}
+            title="创建群聊"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5s-3 1.34-3 3 1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5C15 14.17 10.33 13 8 13zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5zm5-4v2h-2v2h-2v-2h-2V9h2V7h2v2h2z" />
+            </svg>
+          </button>
+        )}
       </div>
 
       {/* Search Box */}
@@ -227,106 +177,103 @@ const ChatList: React.FC<ChatListProps> = ({
 
       {/* Chat List */}
       <div className="chat-list">
-        {chats.map((chat) => (
-          <div
-            key={chat.id}
-            className={`chat-item ${selectedChat === chat.id ? 'active' : ''}`}
-            onClick={() => onChatSelect(chat.id)}
-            onContextMenu={(e) => handleContextMenu(e, chat)}
-          >
-            {/* Avatar */}
-            <div className={`chat-avatar ${chat.type === 'group' ? 'is-group' : ''}`}>
-              {chat.type === 'group' ? (
-                <GroupAvatar memberCount={chat.memberCount} />
-              ) : (
-                <img
-                  src={FriendAvatar}
-                  alt={chat.name}
-                  onError={(e) => {
-                    e.currentTarget.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(chat.name)}&background=6366f1&color=fff&size=48`
-                  }}
-                />
-              )}
-              {chat.isOnline && chat.type !== 'group' && (
-                <div
-                  className="online-indicator"
-                  style={{
-                    position: 'absolute',
-                    bottom: 2,
-                    right: 2,
-                    width: 12,
-                    height: 12,
-                    borderRadius: '50%',
-                    backgroundColor: '#10b981',
-                    border: '2px solid #22222b'
-                  }}
-                />
-              )}
-            </div>
+        {chats.map((chat) => {
+          const displayTime = formatDate(chat.time)
+          const unreadCount = getUnreadCount(chat.unread)
 
-            {/* Chat Info */}
-            <div className="chat-info">
-              <div className="chat-header-row">
-                <span className="chat-name">{chat.name}</span>
-                <span className="chat-time">{formatDate(chat.time)}</span>
-              </div>
-              <div className="chat-header-row">
-                <span className="chat-preview">{chat.lastMessage}</span>
-                {chat.unread && chat.unread > 0 && (
-                  <span className="unread-count">{chat.unread}</span>
+          return (
+            <div
+              key={chat.id}
+              className={`chat-item ${selectedChat === chat.id ? 'active' : ''}`}
+              onClick={() => onChatSelect(chat.id)}
+              onContextMenu={(e) => handleContextMenu(e, chat)}
+            >
+              {/* Avatar */}
+              <div className={`chat-avatar ${chat.type === 'group' ? 'is-group' : ''}`}>
+                {chat.type === 'group' ? (
+                  <GroupAvatar memberCount={chat.memberCount} />
+                ) : (
+                  <img
+                    src={FriendAvatar}
+                    alt={chat.name}
+                    onError={(e) => {
+                      e.currentTarget.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(chat.name)}&background=6366f1&color=fff&size=48`
+                    }}
+                  />
+                )}
+                {chat.isOnline && chat.type !== 'group' && (
+                  <div
+                    className="online-indicator"
+                    style={{
+                      position: 'absolute',
+                      bottom: 2,
+                      right: 2,
+                      width: 12,
+                      height: 12,
+                      borderRadius: '50%',
+                      backgroundColor: '#10b981',
+                      border: '2px solid #22222b'
+                    }}
+                  />
                 )}
               </div>
-            </div>
 
-            {/* Action Buttons (hover only) */}
-            {selectedChat === chat.id && (
-              <div className="chat-actions">
-                <button
-                  className="delete-chat-button"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onDeleteChat(chat.id)
-                  }}
-                  style={{
-                    position: 'absolute',
-                    right: 12,
-                    top: '50%',
-                    transform: 'translateY(-50%)',
-                    width: 24,
-                    height: 24,
-                    borderRadius: '50%',
-                    background: 'none',
-                    border: 'none',
-                    color: '#666',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    opacity: 0,
-                    transition: 'opacity 0.2s'
-                  }}
-                  title="删除聊天"
-                >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
-                  </svg>
-                </button>
+              {/* Chat Info */}
+              <div className="chat-info">
+                <div className="chat-header-row">
+                  <span className="chat-name">{chat.name}</span>
+                  {displayTime && <span className="chat-time">{displayTime}</span>}
+                </div>
+                <div className="chat-header-row">
+                  <span className="chat-preview">{chat.lastMessage}</span>
+                  {unreadCount > 0 && <span className="unread-count">{unreadCount}</span>}
+                </div>
               </div>
-            )}
-          </div>
-        ))}
-      </div>
-      {/* Add Friend Modal */}
-      {isAddFriendModalOpen && activePanel === 'chat' && (
-        <AddFriendModal onClose={handleCloseAddFriendModal} onAddFriend={handleAddFriend} />
-      )}
 
-      {/* Add Group Modal */}
+              {/* Action Buttons (hover only) */}
+              {selectedChat === chat.id && (
+                <div className="chat-actions">
+                  <button
+                    className="delete-chat-button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onDeleteChat(chat.id)
+                    }}
+                    style={{
+                      position: 'absolute',
+                      right: 12,
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      width: 24,
+                      height: 24,
+                      borderRadius: '50%',
+                      background: 'none',
+                      border: 'none',
+                      color: '#666',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      opacity: 0,
+                      transition: 'opacity 0.2s'
+                    }}
+                    title="删除聊天"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
+                    </svg>
+                  </button>
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
       {isAddGroupModalOpen && activePanel === 'groups' && (
         <AddGroupModal
-          onClose={handleCloseAddGroupModal}
-          onAddGroup={handleAddGroup}
           visible={true}
+          onClose={() => setIsAddGroupModalOpen(false)}
+          onAddGroup={handleAddGroup}
           allUsers={availableUsers}
           currentUserId={currentUserId}
         />
@@ -334,6 +281,28 @@ const ChatList: React.FC<ChatListProps> = ({
       <style>{`
         .chat-item {
           position: relative;
+        }
+
+        .chat-list-create-button {
+          width: 36px;
+          height: 36px;
+          border: none;
+          border-radius: 50%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+          background-color: rgba(99, 102, 241, 0.15);
+          color: var(--gradient-purple-start);
+          cursor: pointer;
+          transition:
+            background-color 0.2s ease,
+            color 0.2s ease;
+        }
+
+        .chat-list-create-button:hover {
+          background-color: var(--gradient-purple-start);
+          color: white;
         }
 
         .chat-item .chat-avatar.is-group {
