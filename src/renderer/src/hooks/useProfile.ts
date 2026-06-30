@@ -48,6 +48,24 @@ export function useProfile(options: UseProfileOptions = {}): UseProfileResult {
           nickname: userInfo.nickname || '',
           email: userInfo.email || ''
         })
+      } else {
+        return
+      }
+      // 从 secure-storage.service.ts 中获取用户头像 URL
+      const uInfo = await secureStorageService.getUserInfo()
+      if (!uInfo) return
+      const url = uInfo?.avatarUrl || ''
+      const [, fileName] = url.split('/')
+      const avatarUrlRes = await userService.getAvatarUrl(fileName)
+      console.log('avatarUrl:', avatarUrlRes)
+      if (avatarUrlRes?.data?.url) {
+        setProfile({
+          ...profile,
+          avatar: avatarUrlRes.data.url,
+          username: userInfo.username || '',
+          nickname: userInfo.nickname || '',
+          email: userInfo.email || ''
+        })
       }
     }
     setProfileInfo()
@@ -67,35 +85,43 @@ export function useProfile(options: UseProfileOptions = {}): UseProfileResult {
     const file = e.target.files?.[0]
     if (!file) return
     const reader = new FileReader()
-    reader.onload = () => {
+    reader.onload = async () => {
       if (typeof reader.result !== 'string') return
       const avatar = reader.result
       setProfile((prev) => ({
         ...prev,
         avatar
       }))
-      // 发送请求到后端获取 presigned URL
-      userService.getPresignedUrl(file.name).then((res) => {
+      try {
+        // 发送请求到后端获取 presigned URL
+        const res = await userService.getPresignedUrl(file.name)
         if (res?.data?.url) {
-          fetch(res.data.url, {
+          const uploadRes = await fetch(res.data.url, {
             method: 'PUT',
             headers: {},
             body: file
           })
-            .then((res) => {
-              console.log('Upload response:', res)
-              if (res.ok) {
-                setProfile((prev) => ({
-                  ...prev,
-                  avatarUrl: res.url
-                }))
-              }
+          console.log('Upload response:', uploadRes)
+          if (uploadRes.ok) {
+            setProfile((prev) => ({
+              ...prev,
+              avatarUrl: `public/${file.name}`
+            }))
+            const userInfo = await secureStorageService.getUserInfo();
+            if (!userInfo) return
+            Object.assign(userInfo || {}, {
+              avatarUrl: `public/${file.name}`
             })
-            .catch((err) => {
-              console.error('Upload error:', err)
+            await secureStorageService.setUserInfo({
+              ...userInfo
             })
+          } else {
+            console.error('Upload error:', uploadRes.statusText)
+          }
         }
-      })
+      } catch (err) {
+        console.error('Upload error:', err)
+      }
     }
     reader.readAsDataURL(file)
   }
@@ -109,7 +135,7 @@ export function useProfile(options: UseProfileOptions = {}): UseProfileResult {
         nickname: profile.nickname,
         avatarUrl: profile.avatarUrl,
         email: profile.email,
-        username: profile.username,
+        username: profile.username
       })
       .then(async (res) => {
         if (res?.data?.username) {

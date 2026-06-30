@@ -159,6 +159,9 @@ export const userService = {
   },
   async getPresignedUrl(filename: string) {
     return request.get<{ url: string }>(`/minio/presignedUrl?name=${filename}`)
+  },
+  async getAvatarUrl(fileName: string) {
+    return request.get<{ url: string }>(`/minio/previewUrl?name=${fileName}`)
   }
 }
 
