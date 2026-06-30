@@ -1,8 +1,9 @@
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect, useContext } from 'react'
 import EmojiPicker from '../components/EmojiPicker'
 import FilePicker from '../components/FilePicker'
 import GroupAvatar from '../components/GroupAvatar'
 import FriendAvatar from '@renderer/assets/friend_avatar.svg'
+import { SocketContext } from '@renderer/context'
 
 interface Chat {
   id: string
@@ -14,6 +15,8 @@ interface Chat {
   isOnline?: boolean
   type: 'chat' | 'group'
   memberCount?: number
+  /** 私聊对方的用户 ID；发送私聊消息时作为 receiverId（群聊为 undefined） */
+  peerUserId?: string
 }
 
 interface Message {
@@ -30,6 +33,8 @@ interface ChatDetailProps {
   onBack?: () => void
   isMobile?: boolean
   onCleared?: boolean
+  /** 发送消息时回调（父组件乐观插入，让消息立即上屏） */
+  onSendMessage?: (content: string) => void
 }
 
 const ChatDetail: React.FC<ChatDetailProps> = ({
@@ -37,14 +42,17 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
   messages,
   onBack,
   isMobile = false,
-  onCleared
+  onCleared,
+  onSendMessage
 }) => {
   const [newMessage, setNewMessage] = useState('')
   const [showEmojiPicker, setShowEmojiPicker] = useState(false)
   const [showFilePicker, setShowFilePicker] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
-
-  const scrollToBottom = () => {
+  const isGroup = chat?.type === 'group'
+  const headerStatus = isGroup ? `${chat.memberCount ?? 0} 名成员` : '在线'
+  const { socket } = useContext(SocketContext)
+  const scrollToBottom: () => void = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }
 
@@ -52,12 +60,29 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
     scrollToBottom()
   }, [messages, onCleared])
 
-  const handleSendMessage = () => {
-    if (newMessage.trim() && chat) {
-      // In a real app, this would send to a backend
-      console.log('Sending message:', newMessage)
-      setNewMessage('')
+  const handleSendMessage: () => void = () => {
+    const content = newMessage.trim()
+    if (!content || !chat || !socket) return
+    // 群聊走 message:sendRoom；私聊走 message:sendPrivate（receiverId 为对方 userId）
+    if (isGroup) {
+      socket.emit('message:sendRoom', { roomId: chat.id, content, messageType: 'TEXT' })
+    } else {
+      if (!chat.peerUserId) {
+        console.warn('[ChatDetail] 缺少对方 userId，无法发送私聊消息')
+        return
+      }
+      socket.emit('message:sendPrivate', {
+        receiverId: chat.peerUserId,
+        content,
+        messageType: 'TEXT'
+      })
     }
+    // 乐观上屏：服务端通常不把 message:new 回推给发送者本人，
+    // 这里先本地插入，等对方消息或本人回执到达时由 MainLayout 去重替换
+    onSendMessage?.(content)
+    setNewMessage('')
+    setShowEmojiPicker(false)
+    setShowFilePicker(false)
   }
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -83,9 +108,6 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
     return null
   }
 
-  const isGroup = chat.type === 'group'
-  const headerStatus = isGroup ? `${chat.memberCount ?? 0} 名成员` : '在线'
-
   return (
     <div className="chat-detail">
       {/* Chat Header */}
@@ -103,13 +125,7 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
             {isGroup ? (
               <GroupAvatar memberCount={chat.memberCount} />
             ) : (
-              <img
-                src={chat.avatar || FriendAvatar}
-                alt={chat.name}
-                onError={(e) => {
-                  e.currentTarget.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(chat.name)}&background=6366f1&color=fff&size=40`
-                }}
-              />
+              <img src={chat.avatar || FriendAvatar} alt={chat.name} />
             )}
             {!isGroup && <div className="chat-header-online-dot" />}
           </div>
@@ -142,17 +158,7 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
             >
               {message.sender === 'other' && (
                 <div className="message-avatar">
-                  <img
-                    src={
-                      isGroup
-                        ? `https://ui-avatars.com/api/?name=${encodeURIComponent(senderName)}&background=6366f1&color=fff&size=36`
-                        : chat.avatar || FriendAvatar
-                    }
-                    alt={senderName}
-                    onError={(e) => {
-                      e.currentTarget.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(senderName)}&background=6366f1&color=fff&size=36`
-                    }}
-                  />
+                  <img src={isGroup ? chat.avatar : FriendAvatar} alt={senderName} />
                 </div>
               )}
               <div className="message-body">

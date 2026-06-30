@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import LeftPanel from '../components/LeftPanel'
 import ChatList from '../components/ChatList'
 import ChatDetail from './ChatDetail'
@@ -6,11 +6,14 @@ import Contacts from './Contacts'
 import Notifications from './Notifications'
 import Favorites from './Favorites'
 import ProfileModal from '../components/ProfileModal'
+import { io, type Socket } from 'socket.io-client'
 import { chatService } from '@renderer/services/chat.service'
 import { notificationService } from '@renderer/services/notification.service'
 import { secureStorageService } from '@renderer/services/secure-storage.service'
+import { API_CONFIG } from '@renderer/config/api.config'
 import type { Conversation, ChatMessage as ServerMessage } from '@renderer/types/chat.types'
 import type { AppNotification, FriendRequestAction } from '@renderer/types/notification.types'
+import { SocketContext } from '@renderer/context'
 
 interface Chat {
   id: string
@@ -22,6 +25,8 @@ interface Chat {
   isOnline?: boolean
   type: 'chat' | 'group'
   memberCount?: number
+  /** 私聊对方的用户 ID；ChatDetail 发送私聊消息时作为 receiverId */
+  peerUserId?: string
 }
 
 interface Message {
@@ -71,7 +76,8 @@ const mapConversation = (c: Conversation, meId: string | null): Chat => {
     unread: unreadCount,
     isOnline: false,
     type: isPrivate ? 'chat' : 'group',
-    memberCount: isPrivate ? undefined : c.room.members?.length
+    memberCount: isPrivate ? undefined : c.room.members?.length,
+    peerUserId: isPrivate ? peer?.id : undefined
   }
 }
 
@@ -87,6 +93,13 @@ const MainLayout: React.FC = () => {
 
   // 当前登录用户 ID（用于区分消息发送方、私聊对方）
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
+
+  const [socket, setSocket] = useState<Socket | null>(null)
+  // socket 回调里读取「当前打开的房间」的实时值，避免闭包捕获到旧值
+  const selectedChatRef = useRef<string | null>(selectedChat)
+  useEffect(() => {
+    selectedChatRef.current = selectedChat
+  }, [selectedChat])
 
   // 会话（含私聊/群聊，按 type 区分）/ 当前房间消息：均由接口获取
   const [chats, setChats] = useState<Chat[]>([])
@@ -201,6 +214,126 @@ const MainLayout: React.FC = () => {
     })()
   }, [selectedChat, activePanel, currentUserId, loadMessages])
 
+  // 用 socket.io-client 连接 /chat 命名空间，监听实时消息
+  // 详见 docs/chat-api.md §6（事件名、鉴权方式）
+  useEffect(() => {
+    let socket: Socket | null = null
+    // chat:connected 回传的 userId 作为「是否为自己发送」的权威判定来源
+    let meId: string | null = null
+    // 异步取 token 期间 effect 可能已被清理（卸载 / loadConversations 变化），用 active 守卫避免脏写
+    let active = true
+
+    ;(async () => {
+      const token = await secureStorageService.getAccessToken()
+      const baseURL = API_CONFIG.baseURL
+      if (!token || !baseURL) {
+        console.warn('[Socket] 缺少 token 或 baseURL，跳过 socket 连接')
+        return
+      }
+      if (!active) return
+
+      // HTTP baseURL 形如 http://host:port/api，socket 命名空间为 /chat（与 /api 同级）
+      const socketUrl = `${new URL(baseURL).origin}/chat`
+      console.log('[Socket] 连接 URL:', socketUrl)
+      socket = io(socketUrl, {
+        auth: {
+          token,
+          Authorization: `Bearer ${token}`
+        }
+      })
+      // 暴露给子组件（ChatDetail 发送消息用）
+      setSocket(socket)
+
+      socket.on('connect', () => console.log('[Socket] connected:', socket?.id))
+      socket.on('disconnect', (reason) => console.log('[Socket] disconnected:', reason))
+      socket.on('connect_error', (err) => console.error('[Socket] connect_error:', err.message))
+      socket.on('chat:connected', (d: { userId?: string }) => {
+        if (d?.userId) meId = d.userId
+        console.log('[Socket] 鉴权成功:', d)
+      })
+      socket.on('chat:error', (e: { message?: string }) => {
+        console.error('[Socket] chat:error:', e?.message)
+      })
+
+      // 新消息到达：更新会话预览/未读，必要时追加到当前房间消息列表
+      socket.on('message:new', (msg: ServerMessage) => {
+        if (!msg?.id || !msg.roomId) return
+        const isMe = msg.senderId === meId
+        const local: Message = {
+          id: msg.id,
+          chatId: msg.roomId,
+          content: msg.content || '',
+          time: formatHM(msg.createdAt),
+          sender: isMe ? 'me' : 'other',
+          senderName: msg.sender?.nickname || msg.sender?.username || '群成员'
+        }
+        const isOpen = selectedChatRef.current === msg.roomId
+
+        setChats((prev) => {
+          const idx = prev.findIndex((c) => c.id === msg.roomId)
+          const senderNick = msg.sender?.nickname || msg.sender?.username
+          const isGroup = idx > -1 && prev[idx].type === 'group'
+          // 群聊预览带发送者昵称前缀，私聊只展示内容（与 mapConversation 保持一致）
+          const preview = msg.content
+            ? isGroup
+              ? `${senderNick || ''}: ${msg.content}`
+              : msg.content
+            : ''
+          const base: Chat =
+            idx > -1
+              ? prev[idx]
+              : {
+                  id: msg.roomId,
+                  name: senderNick || '新会话',
+                  avatar: '',
+                  lastMessage: '',
+                  time: '',
+                  type: 'chat'
+                }
+          const next: Chat = {
+            ...base,
+            lastMessage: preview,
+            time: msg.createdAt,
+            // 当前正在看 / 自己发的消息不计未读
+            unread: isOpen || isMe ? undefined : (base.unread || 0) + 1
+          }
+          // 收到新消息的会话置顶
+          return [next, ...prev.filter((c) => c.id !== msg.roomId)]
+        })
+
+        // 正在查看该房间 → 实时追加；其余房间等切换时由 loadMessages 拉取
+        if (isOpen) {
+          setMessages((prev) => {
+            // 同 id 已存在 → 不重复
+            if (prev.some((m) => m.id === local.id)) return prev
+            // 自己刚发的消息已有乐观占位（local- 前缀 + 同房间同内容）→ 用真实消息替换，避免重复
+            const cleaned = prev.filter(
+              (m) =>
+                !(
+                  m.id.startsWith('local-') &&
+                  m.chatId === local.chatId &&
+                  m.content === local.content
+                )
+            )
+            return [...cleaned, local]
+          })
+        }
+      })
+
+      // 新建群聊 / 私聊会话 → 刷新会话列表
+      socket.on('room:created', () => loadConversations(meId))
+      socket.on('room:private', () => loadConversations(meId))
+    })()
+
+    return () => {
+      active = false
+      socket?.removeAllListeners()
+      socket?.disconnect()
+      socket = null
+      setSocket(null)
+    }
+  }, [loadConversations])
+
   // ---- 通知 ----
 
   // 标记单条已读（POST /notifications/markRead）。返回的是裸记录，需保留原 sender
@@ -290,6 +423,24 @@ const MainLayout: React.FC = () => {
     }
   }
 
+  // 乐观插入自己刚发出的消息：让消息立即上屏，不必等服务端 message:new 回推
+  // （服务端通常不把 message:new 回推给发送者本人；id 以 local- 前缀标记为占位）
+  const handleOptimisticSend = useCallback(
+    (content: string): void => {
+      if (!selectedChat) return
+      const optimistic: Message = {
+        id: `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        chatId: selectedChat,
+        content,
+        time: formatHM(new Date().toISOString()),
+        sender: 'me',
+        senderName: '我'
+      }
+      setMessages((prev) => [...prev, optimistic])
+    },
+    [selectedChat]
+  )
+
   // 通讯录：发起 / 打开与某好友的私聊 POST /chat/rooms/private
   // 创建（或复用）私聊房间后，刷新会话列表并切换到「好友消息」面板自动选中
   const startChatWithFriend = useCallback(
@@ -328,6 +479,8 @@ const MainLayout: React.FC = () => {
 
   const handleChatSelect = (chatId: string): void => {
     setSelectedChat(chatId)
+    // 将消息设为已读
+    markChatAsRead(chatId)
     if (window.innerWidth <= 768) {
       setMobileChatOpen(false)
       setMobileDetailOpen(true)
@@ -359,7 +512,8 @@ const MainLayout: React.FC = () => {
     if (clearedChat) {
       const timer = setTimeout(() => {
         setClearedChat(null)
-      }, 100) // Give time for scroll to complete
+      }, 100)
+      // Give time for scroll to complete
       return () => clearTimeout(timer)
     }
     return undefined
@@ -395,13 +549,16 @@ const MainLayout: React.FC = () => {
       {/* Right Panel - Chat Detail or Content Panels */}
       <div className={`right-panel ${mobileDetailOpen ? 'active' : ''}`}>
         {(activePanel === 'chat' || activePanel === 'groups') && selectedChat && (
-          <ChatDetail
-            chat={chats.find((c) => c.id === selectedChat)}
-            messages={messages.filter((m) => m.chatId === selectedChat)}
-            onBack={handleBackToList}
-            isMobile={window.innerWidth <= 768}
-            onCleared={clearedChat === selectedChat}
-          />
+          <SocketContext.Provider value={{ socket }}>
+            <ChatDetail
+              chat={chats.find((c) => c.id === selectedChat)}
+              messages={messages.filter((m) => m.chatId === selectedChat)}
+              onBack={handleBackToList}
+              isMobile={window.innerWidth <= 768}
+              onCleared={clearedChat === selectedChat}
+              onSendMessage={handleOptimisticSend}
+            />
+          </SocketContext.Provider>
         )}
         {activePanel === 'notifications' && (
           <Notifications

@@ -160,15 +160,7 @@ const Contacts: React.FC<ContactsProps> = ({ onStartChat }) => {
                     title={`与 ${friend.name} 聊天`}
                   >
                     <div className="contact-avatar">
-                      <img
-                        src={friend.avatar || FriendAvatar}
-                        alt={friend.name}
-                        onError={(e) => {
-                          e.currentTarget.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(
-                            friend.name
-                          )}&background=6366f1&color=fff&size=48`
-                        }}
-                      />
+                      <img src={friend.avatar || FriendAvatar} alt={friend.name} />
                     </div>
                     <div className="contact-info">
                       <span className="contact-name">{friend.name}</span>

@@ -6,7 +6,10 @@
   "author": "example.com",
   "homepage": "https://electron-vite.org",
   "pnpm": {
-    "onlyBuiltDependencies": ["electron", "@electron/rebuild"]
+    "onlyBuiltDependencies": [
+      "electron",
+      "@electron/rebuild"
+    ]
   },
   "scripts": {
     "format": "prettier --write .",
@@ -32,6 +35,7 @@
     "axios": "^1.18.0",
     "electron-updater": "^6.3.9",
     "react-router-dom": "^7.17.0",
+    "socket.io-client": "^4.8.3",
     "tailwindcss": "^4.3.0"
   },
   "devDependencies": {
