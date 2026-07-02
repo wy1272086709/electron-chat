@@ -57,6 +57,17 @@ const formatHM = (iso?: string | null): string => {
   return `${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
+const NOTIFICATION_SOCKET_EVENTS = [
+  'notification:new',
+  'notification:updated',
+  'notification:read',
+  'notification:readAll',
+  'friend:request',
+  'friend:requestHandled',
+  'group:invite',
+  'group:inviteHandled'
+] as const
+
 // 后端会话 → 本地 Chat
 const mapConversation = (c: Conversation, meId: string | null): Chat => {
   const isPrivate = c.room.topic === 'PRIVATE'
@@ -97,6 +108,8 @@ const MainLayout: React.FC = () => {
   const [socket, setSocket] = useState<Socket | null>(null)
   // socket 回调里读取「当前打开的房间」的实时值，避免闭包捕获到旧值
   const selectedChatRef = useRef<string | null>(selectedChat)
+  const conversationRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const notificationRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
     selectedChatRef.current = selectedChat
   }, [selectedChat])
@@ -177,6 +190,42 @@ const MainLayout: React.FC = () => {
     }
   }, [])
 
+  const scheduleConversationRefresh = useCallback(
+    (meId: string | null): void => {
+      if (conversationRefreshTimerRef.current) {
+        clearTimeout(conversationRefreshTimerRef.current)
+      }
+
+      conversationRefreshTimerRef.current = setTimeout(() => {
+        conversationRefreshTimerRef.current = null
+        void loadConversations(meId)
+      }, 120)
+    },
+    [loadConversations]
+  )
+
+  const scheduleNotificationRefresh = useCallback((): void => {
+    if (notificationRefreshTimerRef.current) {
+      clearTimeout(notificationRefreshTimerRef.current)
+    }
+
+    notificationRefreshTimerRef.current = setTimeout(() => {
+      notificationRefreshTimerRef.current = null
+      void loadNotifications()
+    }, 120)
+  }, [loadNotifications])
+
+  useEffect(() => {
+    return () => {
+      if (conversationRefreshTimerRef.current) {
+        clearTimeout(conversationRefreshTimerRef.current)
+      }
+      if (notificationRefreshTimerRef.current) {
+        clearTimeout(notificationRefreshTimerRef.current)
+      }
+    }
+  }, [])
+
   // 创建群聊后刷新会话列表，并自动选中新群聊
   const handleRefreshConversations = useCallback(
     async (newRoomId?: string): Promise<void> => {
@@ -219,12 +268,14 @@ const MainLayout: React.FC = () => {
   useEffect(() => {
     let socket: Socket | null = null
     // chat:connected 回传的 userId 作为「是否为自己发送」的权威判定来源
-    let meId: string | null = null
+    let meId: string | null = currentUserId
     // 异步取 token 期间 effect 可能已被清理（卸载 / loadConversations 变化），用 active 守卫避免脏写
     let active = true
 
     ;(async () => {
       const token = await secureStorageService.getAccessToken()
+      const user = await secureStorageService.getUserInfo()
+      meId = user?.id ?? currentUserId
       const baseURL = API_CONFIG.baseURL
       if (!token || !baseURL) {
         console.warn('[Socket] 缺少 token 或 baseURL，跳过 socket 连接')
@@ -254,6 +305,17 @@ const MainLayout: React.FC = () => {
       socket.on('chat:error', (e: { message?: string }) => {
         console.error('[Socket] chat:error:', e?.message)
       })
+
+      const refreshConversations = (): void => {
+        scheduleConversationRefresh(meId)
+      }
+      const refreshNotifications = (): void => {
+        scheduleNotificationRefresh()
+      }
+      const refreshNotificationsAndConversations = (): void => {
+        refreshNotifications()
+        refreshConversations()
+      }
 
       // 新消息到达：更新会话预览/未读，必要时追加到当前房间消息列表
       socket.on('message:new', (msg: ServerMessage) => {
@@ -317,22 +379,43 @@ const MainLayout: React.FC = () => {
             )
             return [...cleaned, local]
           })
+
+          if (!isMe) {
+            void chatService.markRoomRead(msg.roomId).then(() => scheduleConversationRefresh(meId))
+          }
         }
       })
 
-      // 新建群聊 / 私聊会话 → 刷新会话列表
-      socket.on('room:created', () => loadConversations(meId))
-      socket.on('room:private', () => loadConversations(meId))
+      socket.on('message:sent', refreshConversations)
+      socket.on('room:created', refreshConversations)
+      socket.on('room:private', refreshConversations)
+      socket.on('room:read', refreshConversations)
+      socket.on('room:cleared', refreshConversations)
+
+      NOTIFICATION_SOCKET_EVENTS.forEach((eventName) => {
+        socket?.on(eventName, refreshNotificationsAndConversations)
+      })
+
+      socket.onAny((eventName: string) => {
+        const lowerEventName = eventName.toLowerCase()
+        const isNotificationEvent =
+          lowerEventName.includes('notification') ||
+          lowerEventName.includes('friend') ||
+          lowerEventName.includes('invite')
+
+        if (isNotificationEvent) {
+          refreshNotificationsAndConversations()
+        }
+      })
     })()
 
     return () => {
       active = false
       socket?.removeAllListeners()
       socket?.disconnect()
-      socket = null
       setSocket(null)
     }
-  }, [loadConversations])
+  }, [currentUserId, scheduleConversationRefresh, scheduleNotificationRefresh])
 
   // ---- 通知 ----
 

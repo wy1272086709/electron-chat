@@ -33,6 +33,7 @@
     "@tailwindcss/vite": "^4.3.0",
     "antd": "^6.4.3",
     "axios": "^1.18.0",
+    "electron-store": "^11.0.2",
     "electron-updater": "^6.3.9",
     "react-router-dom": "^7.17.0",
     "socket.io-client": "^4.8.3",

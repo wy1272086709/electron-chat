@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, shell, dialog, safeStorage, globalShortcut } from 'electron'
 import { join } from 'path'
-import axios from 'axios'
+import axios, { type AxiosRequestConfig } from 'axios'
+import Store from 'electron-store'
 
 axios.interceptors.response.use(
   (response) => {
@@ -31,6 +32,208 @@ interface ApiResponse<T = unknown> {
   data: T
   message?: string
   code?: number
+}
+
+interface IpcApiResponse<T = unknown> {
+  result: boolean
+  data: T | null
+  message?: string
+  code: number
+  headers?: Record<string, string>
+}
+
+interface StoredSecureValue {
+  value: string
+  encrypted: boolean
+}
+
+interface AppStoreSchema {
+  secureStorage?: Record<string, StoredSecureValue>
+}
+
+const store = new Store<AppStoreSchema>({ name: 'app-storage' })
+const apiClient = axios.create()
+
+const IPC_BACKPRESSURE = {
+  maxConcurrent: getPositiveInteger(process.env.ELECTRON_IPC_MAX_CONCURRENT, 8),
+  maxQueueSize: getPositiveInteger(process.env.ELECTRON_IPC_MAX_QUEUE_SIZE, 80)
+}
+
+let activeIpcRequests = 0
+const ipcRequestQueue: IpcQueueTask[] = []
+
+class IpcBackpressureError extends Error {
+  constructor() {
+    super('请求过于频繁，请稍后重试')
+    this.name = 'IpcBackpressureError'
+  }
+}
+
+interface IpcQueueTask {
+  label: string
+  run: () => Promise<unknown>
+  resolve: (value: unknown) => void
+  reject: (reason?: unknown) => void
+}
+
+function getPositiveInteger(value: string | undefined, fallback: number): number {
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback
+}
+
+function runWithIpcBackpressure<T>(label: string, run: () => Promise<T>): Promise<T> {
+  if (
+    activeIpcRequests >= IPC_BACKPRESSURE.maxConcurrent &&
+    ipcRequestQueue.length >= IPC_BACKPRESSURE.maxQueueSize
+  ) {
+    console.warn('[主进程] IPC 请求队列已满，拒绝请求:', label)
+    return Promise.reject(new IpcBackpressureError())
+  }
+
+  return new Promise<T>((resolve, reject) => {
+    const task: IpcQueueTask = {
+      label,
+      run: run as () => Promise<unknown>,
+      resolve: resolve as (value: unknown) => void,
+      reject
+    }
+
+    if (activeIpcRequests < IPC_BACKPRESSURE.maxConcurrent) {
+      startIpcQueueTask(task)
+    } else {
+      ipcRequestQueue.push(task)
+      console.warn('[主进程] IPC 请求进入队列:', label, 'queue=', ipcRequestQueue.length)
+    }
+  })
+}
+
+function startIpcQueueTask(task: IpcQueueTask): void {
+  activeIpcRequests += 1
+
+  task
+    .run()
+    .then(task.resolve)
+    .catch(task.reject)
+    .finally(() => {
+      activeIpcRequests -= 1
+      drainIpcQueue()
+    })
+}
+
+function drainIpcQueue(): void {
+  while (activeIpcRequests < IPC_BACKPRESSURE.maxConcurrent && ipcRequestQueue.length > 0) {
+    const nextTask = ipcRequestQueue.shift()
+    if (nextTask) {
+      startIpcQueueTask(nextTask)
+    }
+  }
+}
+
+function normalizeHeaders(headers: unknown): Record<string, string> {
+  const normalized: Record<string, string> = {}
+  if (!headers || typeof headers !== 'object') return normalized
+
+  Object.entries(headers as Record<string, unknown>).forEach(([key, value]) => {
+    if (typeof value === 'undefined' || value === null) return
+    normalized[key.toLowerCase()] = Array.isArray(value) ? value.join(', ') : String(value)
+  })
+
+  return normalized
+}
+
+function secureStorePath(key: string): `secureStorage.${string}` {
+  return `secureStorage.${key}`
+}
+
+function setSecureStoreString(key: string, value: string): void {
+  const canEncrypt = safeStorage.isEncryptionAvailable()
+  const stored: StoredSecureValue = canEncrypt
+    ? {
+        value: safeStorage.encryptString(value).toString('base64'),
+        encrypted: true
+      }
+    : {
+        value,
+        encrypted: false
+      }
+
+  store.set(secureStorePath(key), stored)
+}
+
+function getSecureStoreString(key: string): string | null {
+  const stored = store.get(secureStorePath(key)) as StoredSecureValue | undefined
+  if (!stored?.value) return null
+
+  if (!stored.encrypted) {
+    return stored.value
+  }
+
+  if (!safeStorage.isEncryptionAvailable()) {
+    console.warn('[安全存储] 当前系统不可解密已加密数据:', key)
+    return null
+  }
+
+  try {
+    return safeStorage.decryptString(Buffer.from(stored.value, 'base64'))
+  } catch (error) {
+    console.error('[安全存储] 解密失败:', key, error)
+    return null
+  }
+}
+
+async function proxyApiRequest(config: AxiosRequestConfig): Promise<IpcApiResponse> {
+  console.log('[主进程] 收到请求:', config.method?.toUpperCase(), config.url)
+
+  const requestConfig = {
+    ...config,
+    baseURL: config.baseURL || API_BASE_URL,
+    timeout: config.timeout || 10000
+  }
+
+  const response = await apiClient.request<ApiResponse>(requestConfig)
+
+  console.log('[主进程] 响应成功:', response.data)
+
+  return {
+    result: response.data.result,
+    data: response.data.data,
+    message: response.data.message || '请求成功',
+    code: response.data.code ?? (response.data.result ? 0 : 1),
+    headers: normalizeHeaders(response.headers)
+  }
+}
+
+function createApiErrorResponse(error: unknown): IpcApiResponse {
+  console.error('[主进程] 请求错误:', error)
+
+  if (error instanceof IpcBackpressureError) {
+    return {
+      result: false,
+      data: null,
+      message: error.message,
+      code: 429
+    }
+  }
+
+  let message = error instanceof Error ? error.message : '请求配置错误'
+  let code = 1
+
+  if (axios.isAxiosError<{ message?: string }>(error)) {
+    const { response, request } = error
+    message = response
+      ? response.data?.message || response.statusText || '请求失败'
+      : request
+        ? '网络错误，请检查连接'
+        : message
+    code = response?.status || code
+  }
+
+  return {
+    result: false,
+    data: null,
+    message,
+    code
+  }
 }
 
 function createWindow(): void {
@@ -93,39 +296,29 @@ app.whenReady().then(() => {
 
   // 安全存储 IPC handlers
   // 检查 safeStorage 是否可用
-  ipcMain.handle('safe-storage-is-available', () => {
+  ipcMain.handle('secure-storage-is-encryption-available', () => {
     return safeStorage.isEncryptionAvailable()
   })
 
-  // 加密字符串
-  ipcMain.handle('safe-storage-encrypt-string', async (_event, plaintext: string) => {
-    try {
-      if (!safeStorage.isEncryptionAvailable()) {
-        throw new Error('Encryption is not available on this system')
-      }
-      const encrypted = safeStorage.encryptString(plaintext)
-      // 将 Buffer 转换为 base64 字符串以便存储
-      return encrypted.toString('base64')
-    } catch (error) {
-      console.error('加密失败:', error)
-      throw error
-    }
+  ipcMain.handle('secure-storage-set-string', async (_event, key: string, value: string) => {
+    setSecureStoreString(key, value || '')
   })
 
-  // 解密字符串
-  ipcMain.handle('safe-storage-decrypt-string', async (_event, encryptedBase64: string) => {
-    try {
-      if (!safeStorage.isEncryptionAvailable()) {
-        throw new Error('Encryption is not available on this system')
-      }
-      // 将 base64 字符串转换回 Buffer
-      const encryptedBuffer = Buffer.from(encryptedBase64, 'base64')
-      const decrypted = safeStorage.decryptString(encryptedBuffer)
-      return decrypted
-    } catch (error) {
-      console.error('解密失败:', error)
-      throw error
+  ipcMain.handle('secure-storage-get-string', async (_event, key: string) => {
+    return getSecureStoreString(key)
+  })
+
+  ipcMain.handle('secure-storage-remove-item', async (_event, key: string) => {
+    store.delete(secureStorePath(key))
+  })
+
+  ipcMain.handle('secure-storage-clear', async (_event, keys?: string[]) => {
+    if (Array.isArray(keys) && keys.length > 0) {
+      keys.forEach((key) => store.delete(secureStorePath(key)))
+      return
     }
+
+    store.delete('secureStorage')
   })
 
   // 文件选择 IPC 处理
@@ -148,49 +341,11 @@ app.whenReady().then(() => {
   })
 
   ipcMain.handle('fetch-data', async (_event, config) => {
+    const label = `${config.method?.toUpperCase() || 'GET'} ${config.url || ''}`
     try {
-      console.log('[主进程] 收到请求:', config.method?.toUpperCase(), config.url)
-
-      // 添加 base URL
-      const requestConfig = {
-        ...config,
-        baseURL: config.baseURL || API_BASE_URL,
-        timeout: config.timeout || 10000
-      }
-
-      // 发送请求
-      const response = await axios<unknown, ApiResponse>(requestConfig)
-
-      console.log('[主进程] 响应成功:', response)
-
-      return {
-        result: response.result,
-        data: response.data,
-        message: response.message || '请求成功',
-        code: response.result ? 0 : 1
-      }
+      return await runWithIpcBackpressure(label, () => proxyApiRequest(config))
     } catch (error: unknown) {
-      console.error('[主进程] 请求错误:', error)
-
-      let message = error instanceof Error ? error.message : '请求配置错误'
-      let code = 1
-
-      if (axios.isAxiosError<{ message?: string }>(error)) {
-        const { response, request } = error
-        message = response
-          ? response.data?.message || response.statusText || '请求失败'
-          : request
-            ? '网络错误，请检查连接'
-            : message
-        code = response?.status || code
-      }
-
-      return {
-        result: false,
-        data: null,
-        message,
-        code
-      }
+      return createApiErrorResponse(error)
     }
   })
 

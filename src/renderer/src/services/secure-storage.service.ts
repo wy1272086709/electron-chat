@@ -1,19 +1,9 @@
 /**
  * 安全存储服务
  *
- * 使用 Electron safeStorage API 加密存储敏感信息（如 token）
- * 通过主进程使用系统级别的密钥链/凭据管理器进行加密存储
+ * 使用 Electron 主进程的 electron-store 持久化敏感信息（如 token）。
+ * 主进程会优先用 safeStorage 加密后写入 electron-store；渲染进程不直接接触 localStorage。
  */
-
-declare global {
-  interface Window {
-    secureStorage?: {
-      isAvailable: () => Promise<boolean>;
-      encryptString: (value: string) => Promise<string>;
-      decryptString: (value: string) => Promise<string>;
-    };
-  }
-}
 
 import { UserInfo } from '../types/api.types'
 
@@ -23,15 +13,18 @@ const STORAGE_KEYS = {
   REFRESH_TOKEN: 'secure_refresh_token',
   USER_INFO: 'secure_user_info',
   IS_LOGGED_IN: 'secure_is_logged_in',
-  USER_EMAIL: 'secure_user_email',
+  USER_EMAIL: 'secure_user_email'
 } as const
 
 /**
  * 安全存储服务类
  */
 class SecureStorageService {
-  private isAvailable: boolean = false
+  private isEncryptionAvailable: boolean = false
+  private storageAvailable: boolean = false
   private initialized: boolean = false
+  private memoryStore = new Map<string, string>()
+  private valueCache = new Map<string, string | null>()
 
   /**
    * 初始化安全存储服务
@@ -42,16 +35,23 @@ class SecureStorageService {
     }
 
     try {
-      // 检查 safeStorage 是否可用
-      if (window.secureStorage && typeof window.secureStorage.isAvailable === 'function') {
-        this.isAvailable = await window.secureStorage.isAvailable()
-        console.log('[安全存储] 加密可用:', this.isAvailable)
+      if (
+        window.secureStorage &&
+        typeof window.secureStorage.setString === 'function' &&
+        typeof window.secureStorage.getString === 'function'
+      ) {
+        this.storageAvailable = true
+        this.isEncryptionAvailable =
+          typeof window.secureStorage.isEncryptionAvailable === 'function'
+            ? await window.secureStorage.isEncryptionAvailable()
+            : await window.secureStorage.isAvailable()
+        console.log('[安全存储] electron-store 可用，加密可用:', this.isEncryptionAvailable)
       } else {
-        console.warn('[安全存储] window.secureStorage 不可用，将使用 localStorage 作为备选方案')
+        console.warn('[安全存储] window.secureStorage 不可用，将使用内存临时存储')
       }
     } catch (error) {
       console.error('[安全存储] 初始化失败:', error)
-      console.warn('[安全存储] 将使用 localStorage 作为备选方案')
+      console.warn('[安全存储] 将使用内存临时存储')
     }
 
     this.initialized = true
@@ -64,14 +64,14 @@ class SecureStorageService {
     await this.initialize()
 
     try {
-      if (this.isAvailable) {
-        // 加密存储
-        const encrypted = await window.secureStorage?.encryptString(value || '')
-        localStorage.setItem(key, encrypted || '')
-      } else {
-        // 备选方案：直接存储
-        localStorage.setItem(key, value)
+      this.valueCache.set(key, value || '')
+
+      if (this.storageAvailable && window.secureStorage) {
+        await window.secureStorage.setString(key, value || '')
+        return
       }
+
+      this.memoryStore.set(key, value || '')
     } catch (error) {
       console.error(`[安全存储] 存储失败 ${key}:`, error)
       throw error
@@ -85,24 +85,19 @@ class SecureStorageService {
     await this.initialize()
 
     try {
-      const value = localStorage.getItem(key)
-      if (!value) {
-        return null
+      if (this.valueCache.has(key)) {
+        return this.valueCache.get(key) || null
       }
 
-      if (this.isAvailable && window.secureStorage) {
-        // 尝试解密
-        try {
-          return await window.secureStorage.decryptString(value)
-        } catch (decryptError) {
-          // 如果解密失败，可能是旧版本的明文数据
-          console.warn(`[安全存储] 解密失败 ${key}，可能是明文数据，尝试直接使用`)
-          return value
-        }
-      } else {
-        // 直接返回
+      if (this.storageAvailable && window.secureStorage) {
+        const value = await window.secureStorage.getString(key)
+        this.valueCache.set(key, value)
         return value
       }
+
+      const value = this.memoryStore.get(key) || null
+      this.valueCache.set(key, value)
+      return value
     } catch (error) {
       console.error(`[安全存储] 获取失败 ${key}:`, error)
       return null
@@ -138,16 +133,22 @@ class SecureStorageService {
    * 删除存储项
    */
   removeItem(key: string): void {
-    localStorage.removeItem(key)
+    this.memoryStore.delete(key)
+    this.valueCache.delete(key)
+    if (this.storageAvailable && window.secureStorage) {
+      void window.secureStorage.removeItem(key)
+    }
   }
 
   /**
    * 清空所有存储
    */
   clear(): void {
-    Object.values(STORAGE_KEYS).forEach(key => {
-      localStorage.removeItem(key)
-    })
+    this.memoryStore.clear()
+    this.valueCache.clear()
+    if (this.storageAvailable && window.secureStorage) {
+      void window.secureStorage.clear(Object.values(STORAGE_KEYS))
+    }
   }
 
   /**

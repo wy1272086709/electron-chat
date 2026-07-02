@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { Input, Avatar, List, Checkbox, Empty } from 'antd'
-import { UserOutlined, GroupOutlined } from '@ant-design/icons'
+import { UserOutlined } from '@ant-design/icons'
 
 interface User {
   id: string

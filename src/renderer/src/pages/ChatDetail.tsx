@@ -2,8 +2,10 @@ import React, { useState, useRef, useEffect, useContext } from 'react'
 import EmojiPicker from '../components/EmojiPicker'
 import FilePicker from '../components/FilePicker'
 import GroupAvatar from '../components/GroupAvatar'
+import MessageContextMenu, { type MessageMenuItem } from '../components/MessageContextMenu'
 import FriendAvatar from '@renderer/assets/friend_avatar.svg'
 import { SocketContext } from '@renderer/context'
+import { favoriteService } from '@renderer/services/favorite.service'
 
 interface Chat {
   id: string
@@ -52,6 +54,16 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
   const isGroup = chat?.type === 'group'
   const headerStatus = isGroup ? `${chat.memberCount ?? 0} 名成员` : '在线'
   const { socket } = useContext(SocketContext)
+
+  // 单条消息右键菜单：记录触发位置与目标消息
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; message: Message } | null>(
+    null
+  )
+  // 已收藏的消息 ID 集合（用于菜单文案 / 图标的即时切换）
+  const [favoritedIds, setFavoritedIds] = useState<Set<string>>(new Set())
+  // 复制 / 收藏等操作的轻提示
+  const [feedback, setFeedback] = useState<string | null>(null)
+
   const scrollToBottom: () => void = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }
@@ -59,6 +71,26 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
   useEffect(() => {
     scrollToBottom()
   }, [messages, onCleared])
+
+  // 初始加载本地已收藏的消息 ID（收藏接口暂未提供，先读 localStorage）
+  useEffect(() => {
+    let active = true
+    favoriteService.list().then((res) => {
+      if (!active || !res.data) return
+      const ids = res.data.map((f) => f.messageId).filter((v): v is string => Boolean(v))
+      setFavoritedIds(new Set(ids))
+    })
+    return () => {
+      active = false
+    }
+  }, [])
+
+  // 轻提示自动消失：feedback 变化即重置定时器，卸载 / 覆盖时由清理函数收尾
+  useEffect(() => {
+    if (!feedback) return
+    const timer = setTimeout(() => setFeedback(null), 1500)
+    return () => clearTimeout(timer)
+  }, [feedback])
 
   const handleSendMessage: () => void = () => {
     const content = newMessage.trim()
@@ -85,7 +117,7 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
     setShowFilePicker(false)
   }
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
+  const handleKeyPress = (e: React.KeyboardEvent): void => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       handleSendMessage()
@@ -102,6 +134,122 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
     const fileName = filePath.split('/').pop()
     setNewMessage((prev) => prev + `[文件: ${fileName}]`)
     setShowFilePicker(false)
+  }
+
+  // 操作反馈轻提示（复制 / 收藏等）：覆盖式显示，由上方 effect 在 1.5s 后自动清除
+  const showToast = (text: string): void => {
+    setFeedback(text)
+  }
+
+  // 复制文本：优先用 Clipboard API，非安全上下文下回退到 execCommand 兜底
+  const copyText = async (text: string): Promise<boolean> => {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text)
+        return true
+      }
+    } catch {
+      // 忽略，走兜底方案
+    }
+    try {
+      const ta = document.createElement('textarea')
+      ta.value = text
+      ta.style.position = 'fixed'
+      ta.style.opacity = '0'
+      document.body.appendChild(ta)
+      ta.select()
+      const ok = document.execCommand('copy')
+      document.body.removeChild(ta)
+      return ok
+    } catch {
+      return false
+    }
+  }
+
+  const handleCopyMessage = (message: Message): void => {
+    copyText(message.content).then((ok) => showToast(ok ? '已复制' : '复制失败'))
+  }
+
+  const handleToggleFavorite = async (message: Message): Promise<void> => {
+    const senderName = message.senderName || (isGroup ? '群成员' : chat?.name) || '消息'
+    try {
+      if (favoritedIds.has(message.id)) {
+        await favoriteService.removeByMessage(message.id)
+        setFavoritedIds((prev) => {
+          const next = new Set(prev)
+          next.delete(message.id)
+          return next
+        })
+        showToast('已取消收藏')
+      } else {
+        // TODO: 收藏接口暂未提供，先写入本地（favorite.service 基于 localStorage）。
+        //   接口就绪后直接替换 favorite.service 内部实现即可；
+        //   与 Favorites 面板的打通（列表改由本服务读取）作为后续步骤。
+        await favoriteService.add({
+          type: 'message',
+          messageId: message.id,
+          title: senderName,
+          content: message.content,
+          time: message.time,
+          chatId: chat?.id
+        })
+        setFavoritedIds((prev) => new Set(prev).add(message.id))
+        showToast('已收藏')
+      }
+    } catch {
+      showToast('操作失败，请重试')
+    }
+  }
+
+  // 组装单条消息的右键菜单项（根据是否已收藏切换文案 / 图标）
+  const buildMessageMenuItems = (message: Message): MessageMenuItem[] => {
+    const favorited = favoritedIds.has(message.id)
+    return [
+      {
+        key: 'copy',
+        label: '复制',
+        icon: (
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+          </svg>
+        ),
+        onClick: () => handleCopyMessage(message)
+      },
+      {
+        key: 'favorite',
+        label: favorited ? '取消收藏' : '收藏',
+        icon: (
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill={favorited ? 'currentColor' : 'none'}
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+          </svg>
+        ),
+        onClick: () => handleToggleFavorite(message)
+      }
+    ]
+  }
+
+  const handleMessageContextMenu = (e: React.MouseEvent, message: Message): void => {
+    e.preventDefault()
+    setContextMenu({ x: e.clientX, y: e.clientY, message })
   }
 
   if (!chat) {
@@ -155,6 +303,7 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
             <div
               key={message.id}
               className={`message ${message.sender === 'me' ? 'sent' : 'received'}`}
+              onContextMenu={(e) => handleMessageContextMenu(e, message)}
             >
               {message.sender === 'other' && (
                 <div className="message-avatar">
@@ -218,6 +367,19 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
       {showFilePicker && (
         <FilePicker onSelect={handleFileSelect} onClose={() => setShowFilePicker(false)} />
       )}
+
+      {/* 单条消息右键菜单（复制 / 收藏） */}
+      {contextMenu && (
+        <MessageContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          items={buildMessageMenuItems(contextMenu.message)}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
+
+      {/* 操作反馈轻提示 */}
+      {feedback && <div className="message-feedback-toast">{feedback}</div>}
 
       <style>{`
         .chat-detail-empty {
@@ -317,6 +479,32 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
           position: absolute;
           bottom: 0;
           width: calc(100% - 360px);
+        }
+
+        .message-feedback-toast {
+          position: fixed;
+          top: 24px;
+          left: 50%;
+          transform: translateX(-50%);
+          background: rgba(0, 0, 0, 0.75);
+          color: #fff;
+          padding: 8px 16px;
+          border-radius: 6px;
+          font-size: 13px;
+          z-index: 1100;
+          pointer-events: none;
+          animation: message-feedback-fade 0.2s ease;
+        }
+
+        @keyframes message-feedback-fade {
+          from {
+            opacity: 0;
+            transform: translate(-50%, -8px);
+          }
+          to {
+            opacity: 1;
+            transform: translate(-50%, 0);
+          }
         }
       `}</style>
     </div>

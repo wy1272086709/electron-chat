@@ -1,12 +1,15 @@
 // 全局类型定义
 /* eslint-disable-next-line prettier/prettier, @typescript-eslint/no-explicit-any */
-type AnyType = any;
+type AnyType = any
 
 // 安全存储 API 接口
 interface SecureStorageAPI {
+  isEncryptionAvailable: () => Promise<boolean>
   isAvailable: () => Promise<boolean>
-  encryptString: (plaintext: string) => Promise<string>
-  decryptString: (encryptedBase64: string) => Promise<string>
+  setString: (key: string, value: string) => Promise<void>
+  getString: (key: string) => Promise<string | null>
+  removeItem: (key: string) => Promise<void>
+  clear: (keys?: string[]) => Promise<void>
 }
 
 // 扩展 Window 接口

@@ -1,7 +1,8 @@
-import React from 'react'
+import React, { useEffect } from 'react'
 import AvaterSvg from '@renderer/assets/avatar.svg'
 import { useNavigate } from 'react-router-dom'
 import { secureStorageService } from '../services/secure-storage.service'
+import { getAvatarUrl } from '@renderer/hooks/util'
 
 interface LeftPanelProps {
   activePanel: 'chat' | 'groups' | 'contacts' | 'notifications' | 'favorites'
@@ -17,6 +18,7 @@ const LeftPanel: React.FC<LeftPanelProps> = ({
   setShowProfileModal
 }) => {
   const navigate = useNavigate()
+  const [avatarUrl, setAvatarUrl] = React.useState<string | null>(null)
   const navItems = [
     {
       id: 'chat',
@@ -66,6 +68,16 @@ const LeftPanel: React.FC<LeftPanelProps> = ({
     }
   ]
 
+  useEffect(() => {
+    const fetchAvatarUrl: () => Promise<string | null> = async () => {
+      const url = await getAvatarUrl()
+      console.log(url)
+      setAvatarUrl(url || null)
+      return url
+    }
+    fetchAvatarUrl()
+  }, [])
+
   return (
     <div className="left-panel">
       {/* Navigation Items */}
@@ -88,7 +100,7 @@ const LeftPanel: React.FC<LeftPanelProps> = ({
       {/* Profile Section */}
       <div className="profile-section">
         <div className="profile-avatar" onClick={() => setShowProfileModal(true)} title="个人资料">
-          <img src={AvaterSvg} alt="Profile" />
+          <img src={avatarUrl || AvaterSvg} alt="Profile" />
         </div>
         <div
           className="logout-button"

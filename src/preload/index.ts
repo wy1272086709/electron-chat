@@ -8,11 +8,13 @@ const api = {
 
 // 安全存储 API
 const secureStorage = {
-  isAvailable: () => ipcRenderer.invoke('safe-storage-is-available'),
-  encryptString: (plaintext: string) =>
-    ipcRenderer.invoke('safe-storage-encrypt-string', plaintext),
-  decryptString: (encryptedBase64: string) =>
-    ipcRenderer.invoke('safe-storage-decrypt-string', encryptedBase64)
+  isEncryptionAvailable: () => ipcRenderer.invoke('secure-storage-is-encryption-available'),
+  isAvailable: () => ipcRenderer.invoke('secure-storage-is-encryption-available'),
+  setString: (key: string, value: string) =>
+    ipcRenderer.invoke('secure-storage-set-string', key, value),
+  getString: (key: string) => ipcRenderer.invoke('secure-storage-get-string', key),
+  removeItem: (key: string) => ipcRenderer.invoke('secure-storage-remove-item', key),
+  clear: (keys?: string[]) => ipcRenderer.invoke('secure-storage-clear', keys)
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to

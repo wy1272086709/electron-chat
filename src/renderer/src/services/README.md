@@ -28,7 +28,7 @@
 ```typescript
 export const API_CONFIG = {
   baseURL: 'https://your-backend.com/api', // 修改为你的后端地址
-  timeout: 10000,
+  timeout: 10000
 }
 ```
 
@@ -42,7 +42,7 @@ VITE_API_BASE_URL=https://your-backend.com/api
 
 ### 1. 认证服务（登录/注册）
 
-```typescript
+````typescript
 import { authService, secureStorageService } from '../services'
 import { message } from 'antd'
 
@@ -122,7 +122,7 @@ const ChatDetail = ({ chatId }: { chatId: string }) => {
     </div>
   )
 }
-```
+````
 
 ### 3. 获取聊天列表
 
@@ -198,7 +198,7 @@ const handleFileUpload = async (file: File) => {
       await chatService.sendMessage({
         chatId: 'xxx',
         content: response.data.url,
-        type: 'image',
+        type: 'image'
       })
     }
   } catch (error) {
@@ -213,60 +213,62 @@ const handleFileUpload = async (file: File) => {
 
 > **重要**：所有认证相关数据必须使用此服务存储
 
-| 方法 | 说明 | 返回值 |
-|------|------|--------|
-| `setAccessToken(token)` | 存储访问令牌 | `Promise<void>` |
-| `getAccessToken()` | 获取访问令牌 | `Promise<string \| null>` |
-| `setRefreshToken(token)` | 存储刷新令牌 | `Promise<void>` |
-| `getRefreshToken()` | 获取刷新令牌 | `Promise<string \| null>` |
-| `setUserInfo(user)` | 存储用户信息 | `Promise<void>` |
-| `getUserInfo()` | 获取用户信息 | `Promise<UserInfo \| null>` |
-| `setLoggedIn(status)` | 存储登录状态 | `Promise<void>` |
-| `getLoggedIn()` | 获取登录状态 | `Promise<boolean>` |
-| `clearAuthData()` | 清除所有认证数据 | `void` |
-| `setUserEmail(email)` | 存储用户邮箱 | `Promise<void>` |
-| `getUserEmail()` | 获取用户邮箱 | `Promise<string \| null>` |
+| 方法                     | 说明             | 返回值                      |
+| ------------------------ | ---------------- | --------------------------- |
+| `setAccessToken(token)`  | 存储访问令牌     | `Promise<void>`             |
+| `getAccessToken()`       | 获取访问令牌     | `Promise<string \| null>`   |
+| `setRefreshToken(token)` | 存储刷新令牌     | `Promise<void>`             |
+| `getRefreshToken()`      | 获取刷新令牌     | `Promise<string \| null>`   |
+| `setUserInfo(user)`      | 存储用户信息     | `Promise<void>`             |
+| `getUserInfo()`          | 获取用户信息     | `Promise<UserInfo \| null>` |
+| `setLoggedIn(status)`    | 存储登录状态     | `Promise<void>`             |
+| `getLoggedIn()`          | 获取登录状态     | `Promise<boolean>`          |
+| `clearAuthData()`        | 清除所有认证数据 | `void`                      |
+| `setUserEmail(email)`    | 存储用户邮箱     | `Promise<void>`             |
+| `getUserEmail()`         | 获取用户邮箱     | `Promise<string \| null>`   |
 
 ### authService（认证服务）
 
-| 方法 | 说明 | 参数 |
-|------|------|------|
-| `login(params)` | 用户登录 | `{ email, password }` |
-| `register(params)` | 用户注册 | `{ username, nickname, email, password, ... }` |
-| `logout()` | 登出 | - |
-| `sendVerificationCode(email)` | 发送验证码 | 邮箱地址 |
-| `getCurrentUser()` | 获取当前用户 | - |
+| 方法                          | 说明         | 参数                                           |
+| ----------------------------- | ------------ | ---------------------------------------------- |
+| `login(params)`               | 用户登录     | `{ email, password }`                          |
+| `register(params)`            | 用户注册     | `{ username, nickname, email, password, ... }` |
+| `logout()`                    | 登出         | -                                              |
+| `sendVerificationCode(email)` | 发送验证码   | 邮箱地址                                       |
+| `getCurrentUser()`            | 获取当前用户 | -                                              |
 
 ### chatService（聊天服务）
 
-| 方法 | 说明 | 参数 |
-|------|------|------|
-| `getChatList()` | 获取聊天列表 | - |
-| `getChatDetail(chatId)` | 获取聊天详情 | 聊天 ID |
-| `getMessages(params)` | 获取消息历史 | `{ chatId, page, pageSize }` |
-| `sendMessage(params)` | 发送消息 | `{ chatId, content, type }` |
-| `uploadFile(file, type)` | 上传文件 | 文件对象, 类型 |
-| `markMessageAsRead(chatId, messageId)` | 标记已读 | 聊天 ID, 消息 ID |
+| 方法                                   | 说明         | 参数                         |
+| -------------------------------------- | ------------ | ---------------------------- |
+| `getChatList()`                        | 获取聊天列表 | -                            |
+| `getChatDetail(chatId)`                | 获取聊天详情 | 聊天 ID                      |
+| `getMessages(params)`                  | 获取消息历史 | `{ chatId, page, pageSize }` |
+| `sendMessage(params)`                  | 发送消息     | `{ chatId, content, type }`  |
+| `uploadFile(file, type)`               | 上传文件     | 文件对象, 类型               |
+| `markMessageAsRead(chatId, messageId)` | 标记已读     | 聊天 ID, 消息 ID             |
 
 ### userService（用户服务）
 
-| 方法 | 说明 | 参数 |
-|------|------|------|
-| `getUserInfo(userId)` | 获取用户信息 | 用户 ID |
+| 方法                   | 说明         | 参数                        |
+| ---------------------- | ------------ | --------------------------- |
+| `getUserInfo(userId)`  | 获取用户信息 | 用户 ID                     |
 | `updateUserInfo(data)` | 更新用户信息 | `{ nickname, avatar, bio }` |
-| `searchUsers(keyword)` | 搜索用户 | 关键词 |
-| `getSettings()` | 获取用户设置 | - |
-| `askAI(prompt)` | 调用 AI 服务 | 提示词 |
+| `searchUsers(keyword)` | 搜索用户     | 关键词                      |
+| `getSettings()`        | 获取用户设置 | -                           |
+| `askAI(prompt)`        | 调用 AI 服务 | 提示词                      |
 
 ## ⚠️ 注意事项
 
 ### 0. 🔒 安全存储（重要）
 
 **本项目使用安全存储系统保护敏感信息，禁止使用 localStorage 存储以下数据：**
+
 - ✅ **推荐**：使用 `secureStorageService` 存储所有认证相关数据
 - ❌ **禁止**：使用 `localStorage` 存储 token、用户信息、登录状态
 
 **为什么需要安全存储？**
+
 - localStorage 是明文存储，任何人都可以通过开发者工具查看
 - Electron 应用中，渲染进程代码可被用户检查
 - 违反项目安全规范（CLAUDE.md 明确规定）
@@ -276,6 +278,7 @@ const handleFileUpload = async (file: File) => {
 **后端 API**：使用 IPC 请求，自动绕过 CORS 限制 ✅
 
 **第三方 API**：使用直接请求，需要服务端支持 CORS
+
 - 如果遇到 CORS 问题，可以：
   - 配置服务器支持 CORS
   - 使用代理服务（开发环境）
@@ -283,12 +286,13 @@ const handleFileUpload = async (file: File) => {
 
 ### 2. Token 管理（安全存储）⚡️
 
-本项目使用 **Electron safeStorage API** 进行加密存储，确保敏感信息安全：
+本项目使用 **electron-store + Electron safeStorage API** 存储认证数据：
 
 #### 🔒 安全存储特性
-- **系统级加密**：使用操作系统密钥链/凭据管理器（macOS Keychain、Windows Credential Manager）
-- **防止明文存储**：token 和用户信息都被加密存储
-- **自动降级**：当加密不可用时自动使用 localStorage 作为备选方案
+
+- **主进程持久化**：渲染进程通过 IPC 调用主进程，由 `electron-store` 写入本地配置文件
+- **优先系统级加密**：可用时使用 `safeStorage` 加密字符串后再写入 `electron-store`
+- **禁止 localStorage**：加密不可用时也不会退回 `localStorage` 存储认证数据
 
 #### 📝 使用示例
 
@@ -311,6 +315,7 @@ secureStorageService.clearAuthData()
 ```
 
 #### ⚠️ 重要说明
+
 - 所有安全存储方法都是**异步**的，必须使用 `await`
 - Token 会自动从安全存储中读取并添加到请求头
 - 不要再使用 `localStorage` 存储敏感信息
@@ -338,7 +343,7 @@ import type { LoginParams, LoginResponse } from '../services'
 
 const params: LoginParams = {
   email: 'user@example.com',
-  password: 'password123',
+  password: 'password123'
 }
 ```
 
@@ -370,15 +375,18 @@ src/renderer/src/
 ```javascript
 // 测试 IPC 通信
 import('electron-vite').then(() => {
-  window.api.request({
-    method: 'GET',
-    url: 'https://api.example.com/test',
-  }).then(console.log)
+  window.api
+    .request({
+      method: 'GET',
+      url: 'https://api.example.com/test'
+    })
+    .then(console.log)
 })
 
 // 测试服务
 import('./services').then(({ authService }) => {
-  authService.login({ email: 'test@test.com', password: '123' })
+  authService
+    .login({ email: 'test@test.com', password: '123' })
     .then(console.log)
     .catch(console.error)
 })

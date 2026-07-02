@@ -50,12 +50,11 @@ const LoginPage: React.FC = () => {
       console.log('[登录] 请求成功:', response)
 
       if (response.result) {
-        const { user, access_token } = response.data || {}
+        const { user } = response.data || {}
 
-        // 使用安全存储服务存储用户信息和 token
+        // token 由 request.ts 从响应头 Authorization 统一保存
         await secureStorageService.setLoggedIn(true)
         await secureStorageService.setUserEmail(email)
-        await secureStorageService.setAccessToken(access_token || '')
 
         // 只在有用户信息时存储
         if (user) {

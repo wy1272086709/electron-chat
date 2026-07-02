@@ -6,6 +6,16 @@ interface ApiResponse<T = unknown> {
   data: T
   message?: string
   code?: number
+  headers?: Record<string, string>
+}
+
+interface SecureStorageAPI {
+  isEncryptionAvailable: () => Promise<boolean>
+  isAvailable: () => Promise<boolean>
+  setString: (key: string, value: string) => Promise<void>
+  getString: (key: string) => Promise<string | null>
+  removeItem: (key: string) => Promise<void>
+  clear: (keys?: string[]) => Promise<void>
 }
 
 declare global {
@@ -14,5 +24,6 @@ declare global {
     api: {
       request: (config: AxiosRequestConfig) => Promise<ApiResponse>
     }
+    secureStorage: SecureStorageAPI
   }
 }

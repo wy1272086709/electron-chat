@@ -3,6 +3,7 @@ import type { ChangeEvent, Dispatch, FormEvent, SetStateAction } from 'react'
 import AvaterSvg from '@renderer/assets/avatar.svg'
 import { secureStorageService } from '../services/secure-storage.service'
 import userService from '@renderer/services/user.service'
+import { getAvatarUrl } from './util'
 
 export interface Profile {
   username: string
@@ -51,17 +52,12 @@ export function useProfile(options: UseProfileOptions = {}): UseProfileResult {
       } else {
         return
       }
-      // 从 secure-storage.service.ts 中获取用户头像 URL
-      const uInfo = await secureStorageService.getUserInfo()
-      if (!uInfo) return
-      const url = uInfo?.avatarUrl || ''
-      const [, fileName] = url.split('/')
-      const avatarUrlRes = await userService.getAvatarUrl(fileName)
-      console.log('avatarUrl:', avatarUrlRes)
-      if (avatarUrlRes?.data?.url) {
+      // 从 secure-storage.service.ts 中获取用户头像 URL\
+      const url = await getAvatarUrl()
+      if (url) {
         setProfile({
           ...profile,
-          avatar: avatarUrlRes.data.url,
+          avatar: url,
           username: userInfo.username || '',
           nickname: userInfo.nickname || '',
           email: userInfo.email || ''

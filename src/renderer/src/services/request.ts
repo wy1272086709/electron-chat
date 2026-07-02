@@ -17,10 +17,13 @@ export interface ElectronResponse<T extends AnyType | null> {
   data: T | null
   code: number
   message?: string
+  headers?: Record<string, string>
 }
 
 // 标志位：防止并发请求在 401 时触发多次跳转
 let isHandlingUnauthorized = false
+let lastRateLimitNoticeAt = 0
+const RATE_LIMIT_NOTICE_INTERVAL = 3000
 
 /**
  * 处理 401 未授权：清除本地登录态并重定向到登录页
@@ -40,6 +43,56 @@ function handleUnauthorized(): void {
       isHandlingUnauthorized = false
     }, 2000)
   }
+}
+
+function showRateLimitNotice(message = '操作太频繁，请稍后重试'): void {
+  const now = Date.now()
+  if (now - lastRateLimitNoticeAt < RATE_LIMIT_NOTICE_INTERVAL) return
+  lastRateLimitNoticeAt = now
+
+  const toast = document.createElement('div')
+  toast.textContent = message
+  toast.setAttribute('role', 'status')
+  Object.assign(toast.style, {
+    position: 'fixed',
+    top: '24px',
+    left: '50%',
+    transform: 'translateX(-50%)',
+    zIndex: '9999',
+    maxWidth: 'calc(100vw - 48px)',
+    padding: '10px 16px',
+    borderRadius: '8px',
+    background: 'rgba(20, 20, 28, 0.94)',
+    color: '#fff',
+    fontSize: '14px',
+    lineHeight: '20px',
+    boxShadow: '0 10px 30px rgba(0, 0, 0, 0.28)',
+    pointerEvents: 'none',
+    opacity: '1',
+    transition: 'opacity 180ms ease'
+  })
+
+  document.body.appendChild(toast)
+  window.setTimeout(() => {
+    toast.style.opacity = '0'
+    window.setTimeout(() => toast.remove(), 220)
+  }, 2200)
+}
+
+function normalizeAuthorizationToken(value?: string | null): string | null {
+  if (!value) return null
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  return trimmed.replace(/^Bearer\s+/i, '').trim() || null
+}
+
+async function saveAuthorizationFromHeaders(headers?: Record<string, string>): Promise<void> {
+  const authorization = headers?.authorization || headers?.Authorization
+  const token = normalizeAuthorizationToken(authorization)
+  if (!token) return
+
+  await secureStorageService.setAccessToken(token)
+  console.log('[Request] 已从响应头更新 Authorization')
 }
 
 class RequestService {
@@ -79,7 +132,8 @@ class RequestService {
 
     // 响应拦截器
     this.directClient.interceptors.response.use(
-      (response: AxiosResponse) => {
+      async (response: AxiosResponse) => {
+        await saveAuthorizationFromHeaders(response.headers as Record<string, string>)
         console.log(`[Direct Request] Response:`, response.data)
         return response.data
       },
@@ -114,9 +168,13 @@ class RequestService {
       const response = (await window.api.request(requestConfig)) as unknown as ElectronResponse<T>
       console.log('[IPC Request] Response:', response)
 
+      await saveAuthorizationFromHeaders(response.headers)
+
       // 401 未授权：token 过期或无效，清除登录态并跳转登录页
       if (response.code === 401) {
         handleUnauthorized()
+      } else if (response.code === 429) {
+        showRateLimitNotice(response.message)
       }
 
       return response
@@ -163,6 +221,9 @@ class RequestService {
             console.error('未授权，请重新登录')
             // 可以在这里触发登出逻辑，使用安全存储服务
             // 这里暂时留空，后续可以添加登出逻辑
+            break
+          case 429:
+            showRateLimitNotice(data?.message || '操作太频繁，请稍后重试')
             break
           case 403:
             console.error('没有权限访问')
