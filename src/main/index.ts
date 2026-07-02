@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, shell, dialog, safeStorage, globalShortcut } from 'electron'
 import { join } from 'path'
 import axios, { type AxiosRequestConfig } from 'axios'
-import Store from 'electron-store'
+import ElectronStore, { type Options as ElectronStoreOptions } from 'electron-store'
 
 axios.interceptors.response.use(
   (response) => {
@@ -47,11 +47,19 @@ interface StoredSecureValue {
   encrypted: boolean
 }
 
-interface AppStoreSchema {
+interface AppStoreSchema extends Record<string, unknown> {
   secureStorage?: Record<string, StoredSecureValue>
 }
 
-const store = new Store<AppStoreSchema>({ name: 'app-storage' })
+type ElectronStoreConstructor = new <T extends Record<string, unknown>>(
+  options?: ElectronStoreOptions<T>
+) => ElectronStore<T>
+
+const StoreConstructor =
+  (ElectronStore as unknown as { default?: ElectronStoreConstructor }).default ??
+  (ElectronStore as unknown as ElectronStoreConstructor)
+
+const store = new StoreConstructor<AppStoreSchema>({ name: 'app-storage' })
 const apiClient = axios.create()
 
 const IPC_BACKPRESSURE = {

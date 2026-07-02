@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import LoginLogo from '../components/LoginLogo'
-import InputField from '../components/InputField'
-import PasswordInput from '../components/PasswordInput'
-import LoginButton from '../components/LoginButton'
+import LoginLogo from '@renderer/components/auth/LoginLogo'
+import InputField from '@renderer/components/auth/InputField'
+import PasswordInput from '@renderer/components/auth/PasswordInput'
+import LoginButton from '@renderer/components/auth/LoginButton'
 import { authService } from '../services/auth.service'
 import { EmailVerificationType } from '../types/api.types'
 

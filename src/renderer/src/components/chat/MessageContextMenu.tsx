@@ -24,7 +24,7 @@ interface MessageContextMenuProps {
  * - 菜单项点击后自动关闭
  *
  * 注意：组件内联样式为全局 CSS，故类名带 message-context-menu 前缀以防与
- * components/ContextMenu.tsx 的 .context-menu-* 冲突。
+ * components/chat/ContextMenu.tsx 的 .context-menu-* 冲突。
  */
 const MessageContextMenu: React.FC<MessageContextMenuProps> = ({ x, y, items, onClose }) => {
   const menuRef = useRef<HTMLDivElement>(null)

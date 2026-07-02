@@ -1,7 +1,6 @@
-import MainLayout from '@renderer/pages/MainLayout'
 import { useState, useEffect, FC } from 'react'
 import { secureStorageService } from '@renderer/services/secure-storage.service'
-import { Navigate } from 'react-router-dom'
+import { Navigate, Outlet } from 'react-router-dom'
 
 // 创建受保护的路由组件
 const ProtectedRoute: FC = () => {
@@ -42,8 +41,8 @@ const ProtectedRoute: FC = () => {
     )
   }
 
-  // 根据登录状态重定向或显示主界面
-  return isLoggedIn ? <MainLayout /> : <Navigate to="/login" replace />
+  // 根据登录状态重定向或显示受保护的子路由
+  return isLoggedIn ? <Outlet /> : <Navigate to="/login" replace />
 }
 
 export default ProtectedRoute

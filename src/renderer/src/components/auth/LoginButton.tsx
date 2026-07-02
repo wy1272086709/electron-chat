@@ -1,6 +1,6 @@
 import React from 'react'
 
-type ButtonType = 'register' | 'login';
+type ButtonType = 'register' | 'login'
 
 interface LoginButtonProps {
   onClick: () => Promise<void> | void

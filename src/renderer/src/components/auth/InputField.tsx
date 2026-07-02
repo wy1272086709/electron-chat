@@ -25,11 +25,7 @@ const InputField: React.FC<InputFieldProps> = ({
     <div className={`input-group ${className}`}>
       {label && <label className="input-label">{label}</label>}
       <div className="input-wrapper">
-        {icon && (
-          <div className="input-icon">
-            {icon}
-          </div>
-        )}
+        {icon && <div className="input-icon">{icon}</div>}
         <input
           type={type}
           placeholder={placeholder}

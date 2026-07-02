@@ -1,8 +1,10 @@
 import React, { useState, useRef, useEffect, useContext } from 'react'
-import EmojiPicker from '../components/EmojiPicker'
-import FilePicker from '../components/FilePicker'
-import GroupAvatar from '../components/GroupAvatar'
-import MessageContextMenu, { type MessageMenuItem } from '../components/MessageContextMenu'
+import EmojiPicker from '@renderer/components/chat/EmojiPicker'
+import FilePicker from '@renderer/components/chat/FilePicker'
+import GroupAvatar from '@renderer/components/groups/GroupAvatar'
+import MessageContextMenu, {
+  type MessageMenuItem
+} from '@renderer/components/chat/MessageContextMenu'
 import FriendAvatar from '@renderer/assets/friend_avatar.svg'
 import { SocketContext } from '@renderer/context'
 import { favoriteService } from '@renderer/services/favorite.service'
@@ -110,7 +112,7 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
       })
     }
     // 乐观上屏：服务端通常不把 message:new 回推给发送者本人，
-    // 这里先本地插入，等对方消息或本人回执到达时由 MainLayout 去重替换
+    // 这里先本地插入，等对方消息或本人回执到达时由 LayoutProvider 去重替换
     onSendMessage?.(content)
     setNewMessage('')
     setShowEmojiPicker(false)

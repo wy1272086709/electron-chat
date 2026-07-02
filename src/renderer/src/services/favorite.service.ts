@@ -6,13 +6,13 @@
  *
  * TODO（接口就绪后）：
  *   1. 将下列方法改为经 request 调用后端收藏接口；
- *   2. 与 Favorites 面板打通：让 MainLayout 的收藏列表改由本服务读取，
+ *   2. 与 Favorites 面板打通：让 LayoutProvider 的收藏列表改由本服务读取，
  *      而不再使用本地 mock。
  */
 
 import type { ElectronResponse } from './request'
 
-/** 收藏项：在 MainLayout/Favorites 的 Favorite 结构基础上增加 messageId，用于判断「某条消息是否已收藏」 */
+/** 收藏项：在 LayoutProvider/Favorites 的 Favorite 结构基础上增加 messageId，用于判断「某条消息是否已收藏」 */
 export interface FavoriteItem {
   id: string
   type: 'message' | 'file'

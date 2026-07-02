@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import FriendAvatar from '@renderer/assets/friend_avatar.svg'
-import AddFriendModal from '@renderer/components/AddFriendModal'
+import AddFriendModal from '@renderer/components/contacts/AddFriendModal'
 import { userService } from '@renderer/services/user.service'
 import type { UserInfo } from '@renderer/types/api.types'
 
