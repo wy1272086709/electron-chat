@@ -3,6 +3,7 @@ import FriendAvatar from '@renderer/assets/friend_avatar.svg'
 import AddFriendModal from '@renderer/components/contacts/AddFriendModal'
 import { userService } from '@renderer/services/user.service'
 import type { UserInfo } from '@renderer/types/api.types'
+import { resolveAvatarUrl } from '@renderer/utils/avatar-url'
 
 interface ContactsProps {
   /** 发起 / 打开与某好友的私聊：创建私聊房间后切换到「好友消息」面板并选中 */
@@ -33,14 +34,15 @@ const Contacts: React.FC<ContactsProps> = ({ onStartChat }) => {
     setLoading(true)
     const res = await userService.getFriends()
     if (res.result && res.data) {
-      setContacts(
-        res.data.map((u: UserInfo) => ({
+      const list = await Promise.all(
+        res.data.map(async (u: UserInfo) => ({
           id: u.id,
           name: u.nickname || u.username,
           username: u.username,
-          avatar: u.avatar || u.avatarUrl || ''
+          avatar: await resolveAvatarUrl(u.avatar || u.avatarUrl)
         }))
       )
+      setContacts(list)
     } else {
       console.warn('[Contacts] 加载好友列表失败:', res.message)
       setContacts([])
@@ -160,7 +162,13 @@ const Contacts: React.FC<ContactsProps> = ({ onStartChat }) => {
                     title={`与 ${friend.name} 聊天`}
                   >
                     <div className="contact-avatar">
-                      <img src={friend.avatar || FriendAvatar} alt={friend.name} />
+                      <img
+                        src={friend.avatar || FriendAvatar}
+                        alt={friend.name}
+                        onError={(e) => {
+                          e.currentTarget.src = FriendAvatar
+                        }}
+                      />
                     </div>
                     <div className="contact-info">
                       <span className="contact-name">{friend.name}</span>

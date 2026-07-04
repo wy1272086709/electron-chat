@@ -20,6 +20,7 @@ export interface LayoutMessage {
   time: string
   sender: 'me' | 'other'
   senderName?: string
+  senderAvatar?: string
 }
 
 export interface Favorite {

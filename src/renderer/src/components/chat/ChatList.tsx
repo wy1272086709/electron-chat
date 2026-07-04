@@ -6,6 +6,7 @@ import ContextMenu from './ContextMenu'
 import { chatService } from '@renderer/services/chat.service'
 import { secureStorageService } from '@renderer/services/secure-storage.service'
 import { userService } from '@renderer/services/user.service'
+import { resolveAvatarUrl } from '@renderer/utils/avatar-url'
 
 interface Chat {
   id: string
@@ -64,14 +65,15 @@ const ChatList: React.FC<ChatListProps> = ({
     setCurrentUserId(me?.id ?? '')
     const res = await userService.getFriends()
     if (res.result && res.data) {
-      setAvailableUsers(
-        res.data.map((u) => ({
+      const users = await Promise.all(
+        res.data.map(async (u) => ({
           id: u.id,
           name: u.nickname || u.username,
-          avatar: u.avatar || u.avatarUrl || '',
+          avatar: await resolveAvatarUrl(u.avatar || u.avatarUrl),
           isOnline: false
         }))
       )
+      setAvailableUsers(users)
     } else {
       setAvailableUsers([])
       console.warn('[ChatList] 加载好友列表失败:', res.message)
@@ -194,10 +196,10 @@ const ChatList: React.FC<ChatListProps> = ({
                   <GroupAvatar memberCount={chat.memberCount} />
                 ) : (
                   <img
-                    src={FriendAvatar}
+                    src={chat.avatar || FriendAvatar}
                     alt={chat.name}
                     onError={(e) => {
-                      e.currentTarget.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(chat.name)}&background=6366f1&color=fff&size=48`
+                      e.currentTarget.src = FriendAvatar
                     }}
                   />
                 )}

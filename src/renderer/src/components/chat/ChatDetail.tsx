@@ -29,6 +29,7 @@ interface Message {
   time: string
   sender: 'me' | 'other'
   senderName?: string
+  senderAvatar?: string
 }
 
 interface ChatDetailProps {
@@ -301,6 +302,8 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
       <div className="messages-container">
         {messages.map((message) => {
           const senderName = message.senderName || (isGroup ? '群成员' : chat.name)
+          const messageAvatar =
+            message.senderAvatar || (!isGroup ? chat.avatar : '') || FriendAvatar
           return (
             <div
               key={message.id}
@@ -309,7 +312,13 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
             >
               {message.sender === 'other' && (
                 <div className="message-avatar">
-                  <img src={isGroup ? chat.avatar : FriendAvatar} alt={senderName} />
+                  <img
+                    src={messageAvatar}
+                    alt={senderName}
+                    onError={(e) => {
+                      e.currentTarget.src = FriendAvatar
+                    }}
+                  />
                 </div>
               )}
               <div className="message-body">

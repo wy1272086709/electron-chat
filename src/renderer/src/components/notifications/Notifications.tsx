@@ -1,5 +1,6 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import type { AppNotification, FriendRequestAction } from '@renderer/types/notification.types'
+import { resolveAvatarUrl } from '@renderer/utils/avatar-url'
 
 interface NotificationsProps {
   notifications: AppNotification[]
@@ -31,6 +32,28 @@ const Notifications: React.FC<NotificationsProps> = ({
   onHandleFriendRequest
 }) => {
   const [selectedTab, setSelectedTab] = useState<'all' | 'unread'>('all')
+  const [senderAvatars, setSenderAvatars] = useState<Record<string, string>>({})
+
+  useEffect(() => {
+    let active = true
+
+    ;(async () => {
+      const entries = await Promise.all(
+        notifications.map(async (notification) => {
+          const url = await resolveAvatarUrl(notification.sender?.avatarUrl)
+          return [notification.id, url] as const
+        })
+      )
+
+      if (active) {
+        setSenderAvatars(Object.fromEntries(entries.filter(([, url]) => Boolean(url))))
+      }
+    })()
+
+    return () => {
+      active = false
+    }
+  }, [notifications])
 
   const filteredNotifications = notifications.filter((notification) => {
     if (selectedTab === 'unread') {
@@ -113,7 +136,7 @@ const Notifications: React.FC<NotificationsProps> = ({
             const isFriend = notification.type === 'FRIEND_REQUEST'
             const senderName =
               notification.sender?.nickname || notification.sender?.username || '未知用户'
-            const avatarUrl = notification.sender?.avatarUrl || ''
+            const avatarUrl = senderAvatars[notification.id] || ''
             const description =
               (notification.extra?.message || '').trim() ||
               (isFriend ? '请求添加你为好友' : '邀请你加入群聊')

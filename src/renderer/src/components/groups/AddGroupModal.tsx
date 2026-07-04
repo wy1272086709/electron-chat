@@ -140,11 +140,7 @@ const AddGroupModal: React.FC<AddGroupModalProps> = ({
                         {user.isOnline && <span className="online-status">在线</span>}
                       </div>
                     }
-                    description={
-                      <div className="user-info">
-                        <span>ID: {user.id}</span>
-                      </div>
-                    }
+                    description={null}
                   />
                 </List.Item>
               )}
@@ -212,6 +208,21 @@ const AddGroupModal: React.FC<AddGroupModalProps> = ({
           overflow-y: auto;
           box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
           border: 1px solid rgba(255, 255, 255, 0.1);
+          color: white;
+        }
+
+        .add-group-modal-content,
+        .add-group-modal-content h3,
+        .add-group-modal-content span,
+        .add-group-modal-content .ant-list,
+        .add-group-modal-content .ant-list-item,
+        .add-group-modal-content .ant-list-item-meta-title,
+        .add-group-modal-content .ant-list-item-meta-description,
+        .add-group-modal-content .ant-empty,
+        .add-group-modal-content .ant-empty-description,
+        .add-group-modal-content .ant-input,
+        .add-group-modal-content textarea {
+          color: white;
         }
 
         .add-group-header {
@@ -288,7 +299,7 @@ const AddGroupModal: React.FC<AddGroupModalProps> = ({
           width: 100%;
           height: 48px;
           background-color: #2a2b3a;
-          border: none;
+          border: 1px solid transparent;
           border-radius: 12px;
           padding: 0 16px;
           transition: all 0.3s ease;
@@ -303,7 +314,7 @@ const AddGroupModal: React.FC<AddGroupModalProps> = ({
 
         .search-input .ant-input-affix-wrapper .ant-input {
           background-color: transparent;
-          color: white;
+          color: white !important;
           font-size: 16px;
         }
 
@@ -314,6 +325,18 @@ const AddGroupModal: React.FC<AddGroupModalProps> = ({
         .search-input .ant-input-prefix {
           color: #666;
           margin-right: 8px;
+        }
+
+        .search-input .ant-input-clear-icon,
+        .group-name-input .ant-input-clear-icon,
+        .group-form-section .ant-input-clear-icon {
+          color: rgba(255, 255, 255, 0.55);
+        }
+
+        .search-input .ant-input-clear-icon:hover,
+        .group-name-input .ant-input-clear-icon:hover,
+        .group-form-section .ant-input-clear-icon:hover {
+          color: white;
         }
 
         .user-list {
@@ -327,6 +350,10 @@ const AddGroupModal: React.FC<AddGroupModalProps> = ({
           background-color: #2a2b3a;
           border-radius: 12px;
           padding: 20px;
+        }
+
+        .selected-preview h3 {
+          color: white;
         }
 
         .selected-users {
@@ -423,7 +450,7 @@ const AddGroupModal: React.FC<AddGroupModalProps> = ({
 
         .action-button.secondary {
           background-color: #2a2b3a;
-          color: #666;
+          color: white;
           border: 1px solid #33333c;
         }
 
@@ -449,7 +476,7 @@ const AddGroupModal: React.FC<AddGroupModalProps> = ({
         .section-title {
           font-size: 16px;
           font-weight: 600;
-          color: #ccc;
+          color: white;
           margin-bottom: 12px;
         }
 
@@ -467,44 +494,63 @@ const AddGroupModal: React.FC<AddGroupModalProps> = ({
           z-index: 1;
         }
 
-        .group-name-input .ant-input {
+        .group-name-input .ant-input-affix-wrapper {
           position: relative;
           height: 48px;
-          background-color: white;
-          border: none;
+          background-color: #2a2b3a;
+          border: 1px solid transparent;
           border-radius: 12px;
-          padding: 0 16px 0 48px;
-          color: #333;
-          font-size: 16px;
+          padding: 0 16px;
           transition: all 0.3s ease;
         }
 
-        .group-name-input .ant-input::placeholder {
+        .group-name-input .ant-input-affix-wrapper:hover,
+        .group-name-input .ant-input-affix-wrapper-focused {
+          border-color: var(--gradient-purple-start);
+          background-color: rgba(42, 43, 58, 0.9);
+          box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.3);
+        }
+
+        .group-name-input .ant-input {
+          background-color: transparent;
+          color: white !important;
+          font-size: 16px;
+        }
+
+        .group-name-input .ant-input::placeholder,
+        .group-description-text.ant-input::placeholder,
+        .group-form-section .ant-input::placeholder {
           color: #666;
         }
 
-        .group-description-text.ant-input {
-          background-color: #2a2b3a;
-          border: none;
-          border-radius: 12px;
-          color: white;
-          font-size: 14px;
-          resize: none;
+        .group-form-section .ant-input-textarea,
+        .group-form-section .ant-input-textarea-show-count {
+          background-color: transparent;
         }
 
-        .group-description-text.ant-input:focus {
+        .group-description-text.ant-input,
+        .group-form-section textarea.ant-input {
+          background-color: #2a2b3a;
+          border: 1px solid transparent;
+          border-radius: 12px;
+          color: white !important;
+          font-size: 14px;
+          resize: none;
+          transition: all 0.3s ease;
+        }
+
+        .group-description-text.ant-input:hover,
+        .group-description-text.ant-input:focus,
+        .group-form-section textarea.ant-input:hover,
+        .group-form-section textarea.ant-input:focus {
           outline: none;
           border-color: var(--gradient-purple-start);
           background-color: rgba(42, 43, 58, 0.9);
           box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.3);
         }
 
-        .group-description-text.ant-input::placeholder {
-          color: #666;
-        }
-
         .ant-input-textarea-show-count::after {
-          color: #666;
+          color: white;
         }
       `}</style>
     </div>

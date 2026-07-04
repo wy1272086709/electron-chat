@@ -16,6 +16,7 @@ import { secureStorageService } from '@renderer/services/secure-storage.service'
 import type { Conversation, ChatMessage as ServerMessage } from '@renderer/types/chat.types'
 import type { AppNotification, FriendRequestAction } from '@renderer/types/notification.types'
 import type { AppPanel, Favorite, LayoutChat, LayoutMessage } from '@renderer/types/layout.types'
+import { resolveAvatarUrl } from '@renderer/utils/avatar-url'
 
 const NOTIFICATION_SOCKET_EVENTS = [
   'notification:new',
@@ -91,6 +92,25 @@ const mapConversation = (c: Conversation, meId: string | null): LayoutChat => {
   }
 }
 
+const resolveChatAvatar = async (chat: LayoutChat): Promise<LayoutChat> => {
+  const avatar = await resolveAvatarUrl(chat.avatar)
+  return avatar ? { ...chat, avatar } : chat
+}
+
+const mapServerMessage = async (m: ServerMessage, meId: string | null): Promise<LayoutMessage> => {
+  const senderAvatar = await resolveAvatarUrl(m.sender?.avatarUrl)
+
+  return {
+    id: m.id,
+    chatId: m.roomId,
+    content: m.content || '',
+    time: formatHM(m.createdAt),
+    sender: m.senderId === meId ? 'me' : 'other',
+    senderName: m.sender?.nickname || m.sender?.username || '群成员',
+    senderAvatar
+  }
+}
+
 export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const navigate = useNavigate()
   const [activePanel, setActivePanel] = useState<AppPanel>('chat')
@@ -137,7 +157,10 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const loadConversations = useCallback(async (meId: string | null): Promise<void> => {
     const res = await chatService.getConversations()
     if (res.result && res.data) {
-      setChats(res.data.map((c) => mapConversation(c, meId)))
+      const list = await Promise.all(
+        res.data.map((c) => resolveChatAvatar(mapConversation(c, meId)))
+      )
+      setChats(list)
     } else {
       console.warn('[Layout] 加载会话列表失败:', res.message)
     }
@@ -146,19 +169,10 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const loadMessages = useCallback(async (roomId: string, meId: string | null): Promise<void> => {
     const res = await chatService.getMessages(roomId, 50)
     if (res.result && res.data) {
-      const list = res.data
+      const sorted = res.data
         .filter((m) => !m.isDeleted)
         .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
-        .map(
-          (m: ServerMessage): LayoutMessage => ({
-            id: m.id,
-            chatId: m.roomId,
-            content: m.content || '',
-            time: formatHM(m.createdAt),
-            sender: m.senderId === meId ? 'me' : 'other',
-            senderName: m.sender?.nickname || m.sender?.username || '群成员'
-          })
-        )
+      const list = await Promise.all(sorted.map((m) => mapServerMessage(m, meId)))
       setMessages(list)
     } else {
       setMessages([])
@@ -296,16 +310,18 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         refreshConversations()
       }
 
-      socket.on('message:new', (msg: ServerMessage) => {
+      socket.on('message:new', async (msg: ServerMessage) => {
         if (!msg?.id || !msg.roomId) return
         const isMe = msg.senderId === meId
+        const senderAvatar = await resolveAvatarUrl(msg.sender?.avatarUrl)
         const local: LayoutMessage = {
           id: msg.id,
           chatId: msg.roomId,
           content: msg.content || '',
           time: formatHM(msg.createdAt),
           sender: isMe ? 'me' : 'other',
-          senderName: msg.sender?.nickname || msg.sender?.username || '群成员'
+          senderName: msg.sender?.nickname || msg.sender?.username || '群成员',
+          senderAvatar
         }
         const isOpen = selectedChatRef.current === msg.roomId
 
@@ -331,6 +347,7 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                 }
           const next: LayoutChat = {
             ...base,
+            avatar: base.avatar || (!isGroup ? senderAvatar : ''),
             lastMessage: preview,
             time: msg.createdAt,
             unread: isOpen || isMe ? undefined : (base.unread || 0) + 1

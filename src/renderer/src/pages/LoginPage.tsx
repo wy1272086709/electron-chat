@@ -60,7 +60,10 @@ const LoginPage: React.FC = () => {
         if (user) {
           await secureStorageService.setUserInfo(user)
         }
-
+        // request.ts 会优先从响应头保存 token；这里兼容后端把 token 放在 body 的情况。
+        if (response.data?.access_token) {
+          await secureStorageService.setAccessToken(response.data.access_token)
+        }
         // 登录成功后跳转到主页
         navigate('/', { replace: true })
         console.log('[登录] 跳转到主页')
