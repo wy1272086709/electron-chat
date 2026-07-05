@@ -7,7 +7,7 @@ import { resolveAvatarUrl } from '@renderer/utils/avatar-url'
 
 interface ContactsProps {
   /** 发起 / 打开与某好友的私聊：创建私聊房间后切换到「好友消息」面板并选中 */
-  onStartChat: (userId: string) => void
+  onStartChat: (userId: string, friend?: Contact) => void
 }
 
 // 联系人列表项（从 GET /users/friends 的 UserInfo 映射而来）
@@ -158,7 +158,7 @@ const Contacts: React.FC<ContactsProps> = ({ onStartChat }) => {
                   <div
                     key={friend.id}
                     className="contact-item"
-                    onClick={() => onStartChat(friend.id)}
+                    onClick={() => onStartChat(friend.id, friend)}
                     title={`与 ${friend.name} 聊天`}
                   >
                     <div className="contact-avatar">
@@ -178,7 +178,7 @@ const Contacts: React.FC<ContactsProps> = ({ onStartChat }) => {
                       className="contact-chat-button"
                       onClick={(e) => {
                         e.stopPropagation()
-                        onStartChat(friend.id)
+                        onStartChat(friend.id, friend)
                       }}
                       title="发消息"
                     >

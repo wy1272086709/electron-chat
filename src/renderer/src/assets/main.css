@@ -362,9 +362,8 @@
 }
 
 .message-avatar {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
+  max-height: 44px;
+  border-radius: 5px;
   overflow: hidden;
   margin: 0 8px;
   flex-shrink: 0;

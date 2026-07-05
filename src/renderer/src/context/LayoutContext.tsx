@@ -13,10 +13,20 @@ import { API_CONFIG } from '@renderer/config/api.config'
 import { chatService } from '@renderer/services/chat.service'
 import { notificationService } from '@renderer/services/notification.service'
 import { secureStorageService } from '@renderer/services/secure-storage.service'
-import type { Conversation, ChatMessage as ServerMessage } from '@renderer/types/chat.types'
+import type { ChatMessage as ServerMessage } from '@renderer/types/chat.types'
 import type { AppNotification, FriendRequestAction } from '@renderer/types/notification.types'
 import type { AppPanel, Favorite, LayoutChat, LayoutMessage } from '@renderer/types/layout.types'
 import { resolveAvatarUrl } from '@renderer/utils/avatar-url'
+import {
+  formatHM,
+  getPrivateRoomId,
+  mapConversation,
+  mapPrivateRoomFallback,
+  mapServerMessage,
+  mergeConversationList,
+  resolveChatAvatar
+} from './layoutContext.helpers'
+import type { LayoutContextValue, StartChatFriendSnapshot } from './layoutContext.types'
 
 const NOTIFICATION_SOCKET_EVENTS = [
   'notification:new',
@@ -29,87 +39,7 @@ const NOTIFICATION_SOCKET_EVENTS = [
   'group:inviteHandled'
 ] as const
 
-interface LayoutContextValue {
-  activePanel: AppPanel
-  currentUserId: string | null
-  selectedChat: string | null
-  mobileChatOpen: boolean
-  mobileDetailOpen: boolean
-  socket: Socket | null
-  chats: LayoutChat[]
-  friendChats: LayoutChat[]
-  groupChats: LayoutChat[]
-  messages: LayoutMessage[]
-  notifications: AppNotification[]
-  favorites: Favorite[]
-  clearedChat: string | null
-  unreadCount: number
-  navigatePanel: (panel: AppPanel) => void
-  setActivePanelState: (panel: AppPanel) => void
-  handleChatSelect: (chatId: string) => void
-  handleBackToList: () => void
-  deleteChat: (id: string) => void
-  markChatAsRead: (chatId: string) => Promise<void>
-  clearChatMessages: (chatId: string) => Promise<void>
-  handleRefreshConversations: (newRoomId?: string) => Promise<void>
-  handleOptimisticSend: (content: string) => void
-  startChatWithFriend: (userId: string) => Promise<void>
-  markNotificationAsRead: (id: string) => Promise<void>
-  markAllNotificationsAsRead: () => Promise<void>
-  handleFriendRequest: (id: string, action: FriendRequestAction) => Promise<void>
-}
-
 const LayoutContext = createContext<LayoutContextValue | null>(null)
-
-const formatHM = (iso?: string | null): string => {
-  if (!iso) return ''
-  const d = new Date(iso)
-  if (isNaN(d.getTime())) return ''
-  const p = (n: number): string => String(n).padStart(2, '0')
-  return `${p(d.getHours())}:${p(d.getMinutes())}`
-}
-
-const mapConversation = (c: Conversation, meId: string | null): LayoutChat => {
-  const isPrivate = c.room.topic === 'PRIVATE'
-  const peer = c.room.members?.find((m) => m.userId !== meId)?.user
-  const lm = c.lastMessage
-  const senderNick = lm?.sender?.nickname || lm?.sender?.username
-  const preview = lm?.content ? (isPrivate ? lm.content : `${senderNick || ''}: ${lm.content}`) : ''
-  const unreadCount =
-    typeof c.unreadCount === 'number' && c.unreadCount > 0 ? c.unreadCount : undefined
-
-  return {
-    id: c.room.id,
-    name: isPrivate ? peer?.nickname || peer?.username || c.room.name : c.room.name,
-    avatar: isPrivate ? peer?.avatarUrl || '' : '',
-    lastMessage: preview,
-    time: lm?.createdAt || '',
-    unread: unreadCount,
-    isOnline: false,
-    type: isPrivate ? 'chat' : 'group',
-    memberCount: isPrivate ? undefined : c.room.members?.length,
-    peerUserId: isPrivate ? peer?.id : undefined
-  }
-}
-
-const resolveChatAvatar = async (chat: LayoutChat): Promise<LayoutChat> => {
-  const avatar = await resolveAvatarUrl(chat.avatar)
-  return avatar ? { ...chat, avatar } : chat
-}
-
-const mapServerMessage = async (m: ServerMessage, meId: string | null): Promise<LayoutMessage> => {
-  const senderAvatar = await resolveAvatarUrl(m.sender?.avatarUrl)
-
-  return {
-    id: m.id,
-    chatId: m.roomId,
-    content: m.content || '',
-    time: formatHM(m.createdAt),
-    sender: m.senderId === meId ? 'me' : 'other',
-    senderName: m.sender?.nickname || m.sender?.username || '群成员',
-    senderAvatar
-  }
-}
 
 export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const navigate = useNavigate()
@@ -143,6 +73,8 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const selectedChatRef = useRef<string | null>(selectedChat)
   const activePanelRef = useRef<AppPanel>(activePanel)
+  const currentUserIdRef = useRef<string | null>(currentUserId)
+  const chatsRef = useRef<LayoutChat[]>(chats)
   const conversationRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const notificationRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -154,13 +86,21 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     activePanelRef.current = activePanel
   }, [activePanel])
 
+  useEffect(() => {
+    currentUserIdRef.current = currentUserId
+  }, [currentUserId])
+
+  useEffect(() => {
+    chatsRef.current = chats
+  }, [chats])
+
   const loadConversations = useCallback(async (meId: string | null): Promise<void> => {
     const res = await chatService.getConversations()
     if (res.result && res.data) {
       const list = await Promise.all(
         res.data.map((c) => resolveChatAvatar(mapConversation(c, meId)))
       )
-      setChats(list)
+      setChats((prev) => mergeConversationList(list, prev, selectedChatRef.current))
     } else {
       console.warn('[Layout] 加载会话列表失败:', res.message)
     }
@@ -230,12 +170,13 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const handleRefreshConversations = useCallback(
     async (newRoomId?: string): Promise<void> => {
-      await loadConversations(currentUserId)
+      await loadConversations(currentUserIdRef.current)
       if (newRoomId) {
+        selectedChatRef.current = newRoomId
         setSelectedChat(newRoomId)
       }
     },
-    [loadConversations, currentUserId]
+    [loadConversations]
   )
 
   useEffect(() => {
@@ -443,7 +384,7 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     []
   )
 
-  const markChatAsRead = async (chatId: string): Promise<void> => {
+  const markChatAsRead = useCallback(async (chatId: string): Promise<void> => {
     setChats((prev) =>
       prev.map((chat) => (chat.id === chatId ? { ...chat, unread: undefined } : chat))
     )
@@ -451,34 +392,39 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (!res.result) {
       console.warn('[Layout] 标记已读失败:', res.message)
     }
-  }
+  }, [])
 
-  const clearChatMessages = async (chatId: string): Promise<void> => {
-    const res = await chatService.clearRoom(chatId)
-    if (!res.result) {
-      console.warn('[Layout] 清空聊天失败:', res.message)
-      return
-    }
+  const clearChatMessages = useCallback(
+    async (chatId: string): Promise<void> => {
+      const res = await chatService.clearRoom(chatId)
+      if (!res.result) {
+        console.warn('[Layout] 清空聊天失败:', res.message)
+        return
+      }
 
-    await loadMessages(chatId, currentUserId)
-    setChats((prev) => {
-      const target = prev.find((c) => c.id === chatId)
-      if (!target) return prev
-      return [...prev.filter((c) => c.id !== chatId), target]
-    })
-    setSelectedChat(chatId)
-    setClearedChat(chatId)
+      await loadMessages(chatId, currentUserIdRef.current)
+      setChats((prev) => {
+        const target = prev.find((c) => c.id === chatId)
+        if (!target) return prev
+        return [...prev.filter((c) => c.id !== chatId), target]
+      })
+      selectedChatRef.current = chatId
+      setSelectedChat(chatId)
+      setClearedChat(chatId)
 
-    const chat = chats.find((c) => c.id === chatId)
-    alert(`已清空与 ${chat?.name || ''} 的聊天记录`)
-  }
+      const chat = chatsRef.current.find((c) => c.id === chatId)
+      alert(`已清空与 ${chat?.name || ''} 的聊天记录`)
+    },
+    [loadMessages]
+  )
 
-  const deleteChat = (id: string): void => {
+  const deleteChat = useCallback((id: string): void => {
     setChats((prev) => prev.filter((chat) => chat.id !== id))
-    if (selectedChat === id) {
+    if (selectedChatRef.current === id) {
+      selectedChatRef.current = null
       setSelectedChat(null)
     }
-  }
+  }, [])
 
   const handleOptimisticSend = useCallback(
     (content: string): void => {
@@ -499,8 +445,10 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const navigatePanel = useCallback(
     (panel: AppPanel): void => {
       if (panel !== activePanelRef.current) {
+        selectedChatRef.current = null
         setSelectedChat(null)
       }
+      activePanelRef.current = panel
       setActivePanel(panel)
 
       const pathByPanel: Record<AppPanel, string> = {
@@ -515,45 +463,78 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     [navigate]
   )
 
-  const setActivePanelState = useCallback((panel: AppPanel): void => {
-    if (panel !== activePanelRef.current) {
-      setSelectedChat(null)
-    }
-    setActivePanel(panel)
-  }, [])
+  const setActivePanelState = useCallback(
+    (panel: AppPanel, options?: { preserveSelectedChatId?: string }): void => {
+      const shouldPreserveSelectedChat =
+        !!options?.preserveSelectedChatId &&
+        selectedChatRef.current === options.preserveSelectedChatId
+
+      if (!shouldPreserveSelectedChat && panel !== activePanelRef.current) {
+        selectedChatRef.current = null
+        setSelectedChat(null)
+      }
+      activePanelRef.current = panel
+      setActivePanel(panel)
+    },
+    []
+  )
 
   const startChatWithFriend = useCallback(
-    async (userId: string): Promise<void> => {
+    async (userId: string, friend?: StartChatFriendSnapshot): Promise<void> => {
       const res = await chatService.createPrivateRoom(userId)
       if (res.result && res.data) {
-        const roomId = res.data.id
-        await loadConversations(currentUserId)
-        setActivePanel('chat')
+        const roomId = getPrivateRoomId(res.data)
+        if (!roomId) {
+          console.warn('[Layout] 发起私聊成功但未拿到房间 ID:', res.data)
+          alert('发起私聊失败：未获取到会话 ID')
+          return
+        }
+
+        const meId = currentUserIdRef.current
+        await loadConversations(meId)
+        const fallbackChat = await mapPrivateRoomFallback(
+          res.data,
+          roomId,
+          { id: userId, ...friend },
+          meId
+        )
+        setChats((prev) => {
+          if (prev.some((chat) => chat.id === roomId)) return prev
+          return [fallbackChat, ...prev]
+        })
+        selectedChatRef.current = roomId
         setSelectedChat(roomId)
-        navigate('/messages')
+        if (window.innerWidth <= 768) {
+          setMobileChatOpen(false)
+          setMobileDetailOpen(true)
+        }
+        navigate('/messages', { state: { preserveSelectedChatId: roomId } })
       } else {
         console.warn('[Layout] 发起私聊失败:', res.message)
         alert(res.message || '发起私聊失败')
       }
     },
-    [loadConversations, currentUserId, navigate]
+    [loadConversations, navigate]
   )
 
-  const handleChatSelect = (chatId: string): void => {
-    setSelectedChat(chatId)
-    void markChatAsRead(chatId)
-    if (window.innerWidth <= 768) {
-      setMobileChatOpen(false)
-      setMobileDetailOpen(true)
-    }
-  }
+  const handleChatSelect = useCallback(
+    (chatId: string): void => {
+      setSelectedChat(chatId)
+      void markChatAsRead(chatId)
+      if (window.innerWidth <= 768) {
+        setMobileChatOpen(false)
+        setMobileDetailOpen(true)
+      }
+    },
+    [markChatAsRead]
+  )
 
-  const handleBackToList = (): void => {
+  const handleBackToList = useCallback((): void => {
     if (window.innerWidth <= 768) {
       setMobileDetailOpen(false)
       setMobileChatOpen(true)
     }
-  }
+  }, [])
 
   useEffect(() => {
     const handleResize = (): void => {

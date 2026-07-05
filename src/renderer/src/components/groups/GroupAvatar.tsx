@@ -39,7 +39,7 @@ const GroupAvatar: React.FC<GroupAvatarProps> = ({ memberCount = 4 }) => {
       width="100%"
       height="100%"
       viewBox="0 0 100 100"
-      style={{ display: 'block' }}
+      style={{ display: 'block', maxWidth: 44, maxHeight: 44 }}
       role="img"
       aria-label="群聊"
     >

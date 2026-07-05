@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react'
+import { useLocation } from 'react-router-dom'
 import ChatList from '@renderer/components/chat/ChatList'
 import ChatDetail from '@renderer/components/chat/ChatDetail'
 import { SocketContext } from '@renderer/context'
@@ -9,6 +10,7 @@ interface ChatRouteProps {
 }
 
 const ChatRoute: React.FC<ChatRouteProps> = ({ type }) => {
+  const location = useLocation()
   const {
     activePanel,
     selectedChat,
@@ -32,11 +34,17 @@ const ChatRoute: React.FC<ChatRouteProps> = ({ type }) => {
 
   useEffect(() => {
     if (activePanel !== type) {
-      setActivePanelState(type)
+      const routeState = location.state as { preserveSelectedChatId?: string } | null
+      setActivePanelState(type, { preserveSelectedChatId: routeState?.preserveSelectedChatId })
     }
-  }, [activePanel, setActivePanelState, type])
+  }, [activePanel, location.state, setActivePanelState, type])
 
-  const pageChats = type === 'chat' ? friendChats : groupChats
+  const selectedChatDetail = selectedChat ? chats.find((c) => c.id === selectedChat) : undefined
+  const panelChats = type === 'chat' ? friendChats : groupChats
+  const pageChats =
+    selectedChatDetail && !panelChats.some((chat) => chat.id === selectedChatDetail.id)
+      ? [selectedChatDetail, ...panelChats]
+      : panelChats
   const emptyText = type === 'chat' ? '选择一位好友开始对话' : '选择一个群聊查看消息'
 
   return (
@@ -60,7 +68,7 @@ const ChatRoute: React.FC<ChatRouteProps> = ({ type }) => {
         {selectedChat ? (
           <SocketContext.Provider value={{ socket }}>
             <ChatDetail
-              chat={chats.find((c) => c.id === selectedChat)}
+              chat={selectedChatDetail}
               messages={messages.filter((m) => m.chatId === selectedChat)}
               onBack={handleBackToList}
               isMobile={window.innerWidth <= 768}

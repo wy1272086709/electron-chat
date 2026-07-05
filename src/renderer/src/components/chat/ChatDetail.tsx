@@ -483,8 +483,12 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
           margin-left: 10px;
         }
         .chat-header-avatar {
-          width: 44px;
-          height: 44px;
+          max-height: 44px;
+          width: auto;
+          img {
+            max-height: 44px;
+            border-radius: 5px;
+          }
         }
         .message-input-container {
           position: absolute;
