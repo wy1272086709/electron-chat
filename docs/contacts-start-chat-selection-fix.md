@@ -15,12 +15,28 @@
 
 - 先检查 `ContactsRoute.tsx`，确认通讯录点击链路确实进入 `startChatWithFriend`。
 - 再检查 `Contacts.tsx`，确认联系人列表项和发消息按钮传入的是好友用户 ID，而不是房间 ID。
+  - **提交 diff 对应**：`src/renderer/src/components/contacts/Contacts.tsx` 将 `onStartChat` 的签名从 `(userId: string) => void` 改为 `(userId: string, friend?: Contact) => void`，并把联系人行点击、发消息按钮点击都改为 `onStartChat(friend.id, friend)`。
+  - **为什么这样改**：后续兜底会话需要联系人昵称、用户名和头像；只传用户 ID 时，如果私聊接口返回数据不完整，前端没有足够信息构造列表项。
 - 继续检查 `LayoutContext.tsx`，发现 `startChatWithFriend` 会把私聊接口返回的房间 ID 写入 `selectedChat`，随后 `navigate('/messages')`。
 - 最后检查 `ChatRoute.tsx` 的面板同步 effect，发现路由切到消息页时会调用 `setActivePanelState(type)`；而 `setActivePanelState` 在面板变化时会清空 `selectedChat`。
+  - **提交 diff 对应**：`src/renderer/src/context/layoutContext.types.ts` 中 `setActivePanelState` 的类型变为 `(panel, options?: { preserveSelectedChatId?: string }) => void`。
+  - **提交 diff 对应**：`src/renderer/src/context/LayoutContext.tsx` 中 `setActivePanelState` 增加 `preserveSelectedChatId` 判断，只有传入的保留 ID 与 `selectedChatRef.current` 匹配时才不清空选中。
+  - **提交 diff 对应**：`src/renderer/src/pages/routes/ChatRoute.tsx` 引入 `useLocation`，从 `location.state` 读取 `preserveSelectedChatId`，再调用 `setActivePanelState(type, { preserveSelectedChatId })`。
 - 第一轮修复后，用户点击验证仍失败。继续从“是否有选中值”和“列表中是否有对应项”两个方向拆分：即使 `selectedChat` 保住，只要 `friendChats` 没有该 room，列表就不会高亮。
+  - **提交 diff 对应**：`src/renderer/src/context/layoutContext.helpers.ts` 新增 `isPrivateConversation`，`mapConversation` 不再只依赖 `room.topic === 'PRIVATE'`，而是先判断明确 topic，再兼容 topic 缺失时的两人成员私聊房间。
+  - **提交 diff 对应**：`src/renderer/src/pages/routes/ChatRoute.tsx` 新增 `selectedChatDetail`、`panelChats`、`pageChats` 合成逻辑；当 `selectedChatDetail` 不在当前面板列表中时，会临时补到列表顶部。
+  - **为什么这样改**：修复“选中 ID 有了，但列表没有对应项，所以无法高亮”的 UI 表现。
 - 第二轮修复后，用户点击验证仍失败。继续复查接口返回形态，发现 `getPrivateRoomId` 可以从 `RoomMember[]` 中取到 `roomId`，但旧的兜底 mapper 遇到数组返回 `null`，导致本地列表项没有插入。
+  - **提交 diff 对应**：`src/renderer/src/context/layoutContext.helpers.ts` 新增 `getPrivateRoomId(data)`，兼容房间对象 `id` / `roomId` 和成员数组里的 `roomId`。
+  - **提交 diff 对应**：`src/renderer/src/context/layoutContext.helpers.ts` 新增 `mapPrivateRoomFallback(data, roomId, friend, meId)`，可以处理房间对象和成员数组，并且优先使用从通讯录传入的 `friend` 快照构造本地会话。
+  - **提交 diff 对应**：`src/renderer/src/context/LayoutContext.tsx` 中 `startChatWithFriend` 不再直接使用 `res.data.id`，而是调用 `getPrivateRoomId(res.data)`，再调用 `mapPrivateRoomFallback(...)` 插入兜底会话。
 - 第三轮修复后，继续检查路由生命周期，发现 `startChatWithFriend` 在通讯录路由尚未卸载时提前设置 `activePanel = 'chat'`，通讯录路由 effect 仍可能把面板同步回 `contacts` 并清空选中。
+  - **提交 diff 对应**：`src/renderer/src/context/LayoutContext.tsx` 中 `startChatWithFriend` 删除了原来的 `setActivePanel('chat')`，改为设置 `selectedChatRef.current` / `setSelectedChat(roomId)` 后直接 `navigate('/messages', { state: { preserveSelectedChatId: roomId } })`。
+  - **为什么这样改**：让消息路由负责面板同步，避免通讯录路由卸载前的 effect 把面板状态拉回 `contacts`。
 - 最后检查 `LayoutContext.tsx` 的状态更新方式，发现 `loadConversations` 会用服务端列表直接覆盖 `chats`。如果后端列表暂时不含新私聊 room，会把刚插入的本地兜底会话冲掉。
+  - **提交 diff 对应**：`src/renderer/src/context/layoutContext.helpers.ts` 新增 `mergeConversationList(incoming, previous, selectedChatId)`。
+  - **提交 diff 对应**：`src/renderer/src/context/LayoutContext.tsx` 中 `loadConversations` 从 `setChats(list)` 改为 `setChats((prev) => mergeConversationList(list, prev, selectedChatRef.current))`。
+  - **为什么这样改**：当服务端列表暂时没有当前选中的本地兜底会话时，保留该会话，避免高亮项闪现后消失。
 
 ## 根因
 
@@ -54,6 +70,107 @@
 12. `loadConversations` 改为通过 `mergeConversationList` 合并服务端列表和当前选中的本地兜底会话，避免接口列表覆盖掉刚创建的本地会话项。
 13. `LayoutContext` 增加 `currentUserIdRef` 和 `chatsRef`，让稳定回调可以读取最新状态，减少对 state 依赖的函数重建。
 14. 将 `markChatAsRead`、`clearChatMessages`、`deleteChat`、`handleBackToList` 等 action 包成 `useCallback`，降低 Provider value 因函数引用变化造成的额外渲染。
+
+## 本次提交 Diff 记录
+
+提交：`cc0bf90 feat: 修复从通讯录跳转到好友界面的bug`
+
+提交时间：`2026-07-05 18:10:11 +0800`
+
+总体变更：`10 files changed, 630 insertions(+), 142 deletions(-)`
+
+### 核心修复文件
+
+#### `src/renderer/src/components/contacts/Contacts.tsx`
+
+- `onStartChat` 从只传 `userId` 改为传 `userId + Contact`。
+- 联系人行点击从 `onStartChat(friend.id)` 改为 `onStartChat(friend.id, friend)`。
+- 发消息按钮点击也同步改为 `onStartChat(friend.id, friend)`。
+
+这部分 diff 对应排查里的“接口返回数据不完整时，需要从通讯录保留联系人快照”。
+
+#### `src/renderer/src/context/LayoutContext.tsx`
+
+- 移除了内联的 `LayoutContextValue`、`formatHM`、`mapConversation`、`resolveChatAvatar`、`mapServerMessage`，改为从新文件导入。
+- 新增 `currentUserIdRef` 和 `chatsRef`，让稳定回调可以读到最新用户 ID 和会话列表。
+- `loadConversations` 从直接覆盖 `chats` 改为通过 `mergeConversationList` 合并服务端列表和本地兜底会话。
+- `handleRefreshConversations` 改为读取 `currentUserIdRef.current`，并在传入 `newRoomId` 时同步更新 `selectedChatRef.current`。
+- `markChatAsRead`、`clearChatMessages`、`deleteChat`、`handleBackToList` 改为 `useCallback`。
+- `setActivePanelState` 增加 `preserveSelectedChatId` 参数，避免消息路由同步时误清空刚选中的私聊。
+- `startChatWithFriend` 从直接读取 `res.data.id` 改为：
+  - 调用 `getPrivateRoomId(res.data)`；
+  - 刷新会话列表；
+  - 调用 `mapPrivateRoomFallback(...)` 构造兜底会话；
+  - 必要时插入本地 `chats`；
+  - 设置 `selectedChatRef.current` 和 `selectedChat`；
+  - 移动端同步打开详情；
+  - 跳转 `/messages` 并携带 `preserveSelectedChatId`。
+- 删除了 `startChatWithFriend` 中提前 `setActivePanel('chat')` 的行为。
+
+这部分 diff 是 bug 修复的主干。
+
+#### `src/renderer/src/context/layoutContext.helpers.ts`
+
+新文件，承载从 `LayoutContext.tsx` 拆出的纯逻辑：
+
+- `formatHM`
+- `mapConversation`
+- `resolveChatAvatar`
+- `getPrivateRoomId`
+- `mapPrivateRoomFallback`
+- `mapServerMessage`
+- `mergeConversationList`
+
+其中与本 bug 直接相关的是 `getPrivateRoomId`、`mapPrivateRoomFallback`、`mergeConversationList` 和 `mapConversation` 中的私聊识别逻辑。
+
+#### `src/renderer/src/context/layoutContext.types.ts`
+
+新文件，承载 Context 对外类型：
+
+- `StartChatFriendSnapshot`
+- `LayoutContextValue`
+
+关键 diff 是 `setActivePanelState` 支持 `preserveSelectedChatId`，以及 `startChatWithFriend` 支持接收联系人快照。
+
+#### `src/renderer/src/pages/routes/ChatRoute.tsx`
+
+- 引入 `useLocation`。
+- 从 `location.state` 读取 `preserveSelectedChatId`。
+- 调用 `setActivePanelState(type, { preserveSelectedChatId })`。
+- 新增 `selectedChatDetail`。
+- 当当前面板列表缺少选中会话时，把 `selectedChatDetail` 临时补进 `pageChats`。
+- `ChatDetail` 的 `chat` 参数改为使用 `selectedChatDetail`。
+
+这部分 diff 解决“路由同步误清空选中”和“列表没有当前选中项无法高亮”。
+
+### 同次提交的文档文件
+
+#### `docs/contacts-start-chat-selection-fix.md`
+
+新增本文档，用于记录通讯录跳转消息页后用户无法选中的背景、排查、根因和修复方案。
+
+#### `docs/layout-context-refactor-record.md`
+
+新增 `LayoutContext` 重构记录，说明为什么拆出类型 / helper、为什么暂不一次性拆多个 Context，以及后续可拆分方向。
+
+### 同次提交的视觉调整
+
+这些文件也在 `cc0bf90` 中，但它们不是“通讯录跳转无法选中”主链路的根因修复：
+
+#### `src/renderer/src/components/groups/GroupAvatar.tsx`
+
+- 群聊头像 SVG 增加 `maxWidth: 44`、`maxHeight: 44`。
+
+#### `src/renderer/src/components/chat/ChatDetail.tsx`
+
+- `.chat-header-avatar` 从固定 `width/height: 44px` 调整为 `max-height: 44px; width: auto`。
+- 内部 `img` 增加 `max-height: 44px` 和 `border-radius: 5px`。
+
+#### `src/renderer/src/assets/main.css`
+
+- `.message-avatar` 从固定 `36px` 圆形头像调整为 `max-height: 44px` 和 `border-radius: 5px`。
+
+这些视觉调整与前面的头像尺寸需求相关，阅读 bug 排查时不要把它们当成选中问题的根因。
 
 ## 性能优化记录
 
