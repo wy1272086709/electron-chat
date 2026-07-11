@@ -33,7 +33,7 @@ const Notifications: React.FC<NotificationsProps> = ({
 }) => {
   const [selectedTab, setSelectedTab] = useState<'all' | 'unread'>('all')
   const [senderAvatars, setSenderAvatars] = useState<Record<string, string>>({})
-
+  console.log('Notifications rendered with notifications:', notifications)
   useEffect(() => {
     let active = true
 
@@ -118,7 +118,7 @@ const Notifications: React.FC<NotificationsProps> = ({
 
       {/* Notifications List */}
       <div className="notifications-list">
-        {filteredNotifications.length === 0 ? (
+        {notifications.length === 0 ? (
           <div className="empty-notifications">
             <svg
               width="48"
@@ -132,7 +132,7 @@ const Notifications: React.FC<NotificationsProps> = ({
             <p>暂无通知</p>
           </div>
         ) : (
-          filteredNotifications.map((notification) => {
+          notifications.map((notification) => {
             const isFriend = notification.type === 'FRIEND_REQUEST'
             const senderName =
               notification.sender?.nickname || notification.sender?.username || '未知用户'

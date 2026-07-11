@@ -1,5 +1,7 @@
 import { app, BrowserWindow, ipcMain, shell, dialog, safeStorage, globalShortcut } from 'electron'
-import { join } from 'path'
+import { join, parse, resolve, sep } from 'path'
+import { createWriteStream, existsSync, mkdirSync } from 'fs'
+import { pipeline } from 'stream/promises'
 import axios, { type AxiosRequestConfig } from 'axios'
 import ElectronStore, { type Options as ElectronStoreOptions } from 'electron-store'
 
@@ -20,7 +22,7 @@ axios.interceptors.response.use(
 let iconPath: string | undefined
 try {
   iconPath = require.resolve('../../resources/icon.png')
-} catch (e) {
+} catch {
   console.log('Icon not found, using default')
 }
 
@@ -61,6 +63,7 @@ const StoreConstructor =
 
 const store = new StoreConstructor<AppStoreSchema>({ name: 'app-storage' })
 const apiClient = axios.create()
+const transferClient = axios.create()
 
 const IPC_BACKPRESSURE = {
   maxConcurrent: getPositiveInteger(process.env.ELECTRON_IPC_MAX_CONCURRENT, 8),
@@ -147,6 +150,34 @@ function normalizeHeaders(headers: unknown): Record<string, string> {
   })
 
   return normalized
+}
+
+function getChatDownloadsDir(): string {
+  return resolve(app.getPath('downloads'), 'electron-chat')
+}
+
+function isPathInside(targetPath: string, rootPath: string): boolean {
+  const target = resolve(targetPath)
+  const root = resolve(rootPath)
+  const rootPrefix = root.endsWith(sep) ? root : `${root}${sep}`
+  return target === root || target.startsWith(rootPrefix)
+}
+
+function getAvailableDownloadPath(fileName: string): string {
+  const downloadsDir = getChatDownloadsDir()
+  mkdirSync(downloadsDir, { recursive: true })
+
+  const safeName = fileName.split(/[\\/]/).filter(Boolean).pop() || `download-${Date.now()}`
+  const parsed = parse(safeName)
+  let candidate = join(downloadsDir, safeName)
+  let index = 1
+
+  while (existsSync(candidate)) {
+    candidate = join(downloadsDir, `${parsed.name} (${index})${parsed.ext}`)
+    index += 1
+  }
+
+  return candidate
 }
 
 function secureStorePath(key: string): `secureStorage.${string}` {
@@ -354,6 +385,77 @@ app.whenReady().then(() => {
       return await runWithIpcBackpressure(label, () => proxyApiRequest(config))
     } catch (error: unknown) {
       return createApiErrorResponse(error)
+    }
+  })
+
+  // 文件上传：把渲染器拿到的预签名 PUT URL + 文件字节，由主进程(Node)执行 PUT。
+  // 后端无 HTTP CORS，渲染器直发 MinIO 会被拦；主进程不受 CORS 限制。
+  // 注意：故意不走 runWithIpcBackpressure——该队列 8 并发/80 排队、10s 超时，
+  // 专为小 JSON 调校，几个上传会饿死普通 API；上传单独 handler，无超时上限。
+  ipcMain.handle(
+    'upload-file',
+    async (
+      _event,
+      payload: { presignedUrl: string; arrayBuffer: ArrayBuffer; contentType: string }
+    ) => {
+      try {
+        const headers = payload.contentType ? { 'Content-Type': payload.contentType } : undefined
+        await transferClient.put(payload.presignedUrl, Buffer.from(payload.arrayBuffer), {
+          headers,
+          timeout: 0,
+          maxContentLength: Infinity,
+          maxBodyLength: Infinity
+        })
+        return { result: true, data: null, code: 0, message: '上传成功' }
+      } catch (error) {
+        console.error('[主进程] 文件上传失败:', error)
+        const code = axios.isAxiosError(error) ? error.response?.status || 1 : 1
+        const message = error instanceof Error ? error.message : '上传失败'
+        return { result: false, data: null, code, message }
+      }
+    }
+  )
+
+  // 文件下载：主进程流式拉取预签名 GET URL，写入系统下载目录。
+  // 跨域 <a download> 不可靠，故走主进程；用 pipeline 流式写入避免大文件占满内存。
+  // 文件名做 basename 清洗，防止 path traversal 逃出下载目录。
+  ipcMain.handle(
+    'download-file',
+    async (_event, payload: { previewUrl: string; fileName: string }) => {
+      try {
+        const dest = getAvailableDownloadPath(payload.fileName)
+        const response = await transferClient.get(payload.previewUrl, {
+          responseType: 'stream',
+          timeout: 0
+        })
+        await pipeline(response.data, createWriteStream(dest))
+        return { result: true, data: { path: dest }, code: 0, message: '下载成功' }
+      } catch (error) {
+        console.error('[主进程] 文件下载失败:', error)
+        const code = axios.isAxiosError(error) ? error.response?.status || 1 : 1
+        const message = error instanceof Error ? error.message : '下载失败'
+        return { result: false, data: null, code, message }
+      }
+    }
+  )
+
+  ipcMain.handle('open-local-file', async (_event, payload: { path: string }) => {
+    try {
+      const downloadsDir = getChatDownloadsDir()
+      const targetPath = resolve(payload.path)
+      if (!isPathInside(targetPath, downloadsDir)) {
+        return { result: false, data: null, code: 403, message: '不能打开下载目录之外的文件' }
+      }
+
+      const errorMessage = await shell.openPath(targetPath)
+      if (errorMessage) {
+        return { result: false, data: null, code: 1, message: errorMessage }
+      }
+      return { result: true, data: { path: targetPath }, code: 0, message: '打开成功' }
+    } catch (error) {
+      console.error('[主进程] 打开文件失败:', error)
+      const message = error instanceof Error ? error.message : '打开文件失败'
+      return { result: false, data: null, code: 1, message }
     }
   })
 

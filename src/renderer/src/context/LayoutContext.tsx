@@ -10,14 +10,25 @@ import React, {
 import { useNavigate } from 'react-router-dom'
 import { io, type Socket } from 'socket.io-client'
 import { API_CONFIG } from '@renderer/config/api.config'
+import FavoriteImageSample from '@renderer/assets/favorite-image-sample.svg'
 import { chatService } from '@renderer/services/chat.service'
 import { notificationService } from '@renderer/services/notification.service'
 import { secureStorageService } from '@renderer/services/secure-storage.service'
 import type { ChatMessage as ServerMessage } from '@renderer/types/chat.types'
 import type { AppNotification, FriendRequestAction } from '@renderer/types/notification.types'
-import type { AppPanel, Favorite, LayoutChat, LayoutMessage } from '@renderer/types/layout.types'
-import { resolveAvatarUrl } from '@renderer/utils/avatar-url'
+import type {
+  AppPanel,
+  Favorite,
+  LayoutChat,
+  LayoutMessage,
+  LayoutMessageType,
+  MessageAttachment,
+  MessageDeliveryStatus
+} from '@renderer/types/layout.types'
+import { uploadMedia } from '@renderer/services/upload.service'
+import { isImageFile } from '@renderer/utils/file-meta'
 import {
+  buildLastMessagePreview,
   formatHM,
   getPrivateRoomId,
   mapConversation,
@@ -26,7 +37,14 @@ import {
   mergeConversationList,
   resolveChatAvatar
 } from './layoutContext.helpers'
-import type { LayoutContextValue, StartChatFriendSnapshot } from './layoutContext.types'
+import type {
+  ChatContextValue,
+  FavoritesContextValue,
+  LayoutContextValue,
+  NavigationContextValue,
+  NotificationsContextValue,
+  StartChatFriendSnapshot
+} from './layoutContext.types'
 
 const NOTIFICATION_SOCKET_EVENTS = [
   'notification:new',
@@ -39,7 +57,45 @@ const NOTIFICATION_SOCKET_EVENTS = [
   'group:inviteHandled'
 ] as const
 
+/** 等待服务端 ack 的超时时间（ms）；超时未回执则把消息标记为 failed，提示用户重发 */
+const SEND_ACK_TIMEOUT_MS = 8000
+
+/** socket.emit 回执（ack）的载荷形态，对齐后端 DataResult */
+type SendAckResponse = { result?: boolean; data?: unknown; message?: string }
+
+/** 发送到服务端的载荷（对齐 SendRoomMessageDto / SendPrivateMessageDto 的媒体字段） */
+interface SendPayload {
+  content?: string
+  messageType: LayoutMessageType
+  fileUrl?: string
+  fileName?: string
+  fileSize?: number
+  fileType?: string
+  mediaWidth?: number
+  mediaHeight?: number
+  thumbnailUrl?: string
+}
+
+/** 把附件元数据转成发送载荷（重发已上传完成的媒体消息时复用） */
+function mediaPayloadFromAttachment(att: MessageAttachment, content?: string): SendPayload {
+  return {
+    messageType: att.messageType,
+    content: content || undefined,
+    fileUrl: att.objectName,
+    fileName: att.fileName,
+    fileSize: att.fileSize,
+    fileType: att.fileType,
+    mediaWidth: att.mediaWidth,
+    mediaHeight: att.mediaHeight,
+    thumbnailUrl: att.thumbnailUrl
+  }
+}
+
 const LayoutContext = createContext<LayoutContextValue | null>(null)
+const NavigationContext = createContext<NavigationContextValue | null>(null)
+const ChatContext = createContext<ChatContextValue | null>(null)
+const NotificationsContext = createContext<NotificationsContextValue | null>(null)
+const FavoritesContext = createContext<FavoritesContextValue | null>(null)
 
 export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const navigate = useNavigate()
@@ -56,18 +112,58 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [favorites] = useState<Favorite[]>([
     {
       id: '1',
-      type: 'message',
-      title: '项目文档',
-      content: '请查看最新的项目文档，包含了所有功能需求',
-      time: '2024-01-15',
+      type: 'text',
+      title: '有没有女生聊 老师刚吃饭完有劲 带你聊一波 让妹子对你回味无穷',
+      source: '欧阳校长-白哥 60B',
+      time: '2026-07-05',
       chatId: '2'
     },
     {
       id: '2',
+      type: 'text',
+      title: 'Token消耗完了',
+      source: 'WLB 社群',
+      time: '2026-07-05',
+      chatId: '3'
+    },
+    {
+      id: '3',
+      type: 'image',
+      title: '[KY科学择偶] 交友实践 02群',
+      source: '[KY科学择偶] 交友实践 02群',
+      thumbnail: FavoriteImageSample,
+      time: '2026-05-04',
+      chatId: '4'
+    },
+    {
+      id: '4',
       type: 'file',
-      title: '设计稿.zip',
-      time: '2024-01-14',
-      fileName: '设计稿_v2.0.zip'
+      title: '第1-11周课件.zip',
+      fileName: '第1-11周课件.zip',
+      fileExt: 'ZIP',
+      fileSize: '32.3 MB',
+      source: '群聊',
+      time: '2022-02-21'
+    },
+    {
+      id: '5',
+      type: 'file',
+      title: '教师国考介绍 (1).pptx',
+      fileName: '教师国考介绍 (1).pptx',
+      fileExt: 'PPTX',
+      fileSize: '12.4 MB',
+      source: '群聊',
+      time: '2017-05-03'
+    },
+    {
+      id: '6',
+      type: 'file',
+      title: '华夏思源休学延学指南 2017.docx',
+      fileName: '华夏思源休学延学指南 2017.docx',
+      fileExt: 'DOCX',
+      fileSize: '948 KB',
+      source: '流水无痕',
+      time: '2017-03-19'
     }
   ])
 
@@ -75,6 +171,9 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const activePanelRef = useRef<AppPanel>(activePanel)
   const currentUserIdRef = useRef<string | null>(currentUserId)
   const chatsRef = useRef<LayoutChat[]>(chats)
+  const messagesRef = useRef<LayoutMessage[]>(messages)
+  // 媒体重发时需要原始 File（LayoutMessage 不存二进制）：localId → File，发送成功/卸载时清理
+  const pendingFilesRef = useRef<Map<string, File>>(new Map())
   const conversationRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const notificationRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -93,6 +192,10 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   useEffect(() => {
     chatsRef.current = chats
   }, [chats])
+
+  useEffect(() => {
+    messagesRef.current = messages
+  }, [messages])
 
   const loadConversations = useCallback(async (meId: string | null): Promise<void> => {
     const res = await chatService.getConversations()
@@ -158,6 +261,7 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, [loadNotifications])
 
   useEffect(() => {
+    const pendingFiles = pendingFilesRef.current
     return () => {
       if (conversationRefreshTimerRef.current) {
         clearTimeout(conversationRefreshTimerRef.current)
@@ -165,6 +269,13 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       if (notificationRefreshTimerRef.current) {
         clearTimeout(notificationRefreshTimerRef.current)
       }
+      // 卸载时回收所有乐观媒体消息的 blob 预览 URL，避免内存泄漏
+      messagesRef.current.forEach((m) => {
+        if (m.attachment?.localPreviewUrl) {
+          URL.revokeObjectURL(m.attachment.localPreviewUrl)
+        }
+      })
+      pendingFiles.clear()
     }
   }, [])
 
@@ -222,6 +333,7 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       const socketUrl = `${new URL(baseURL).origin}/chat`
       console.log('[Socket] 连接 URL:', socketUrl)
       socket = io(socketUrl, {
+        transports: ['websocket'],
         auth: {
           token,
           Authorization: `Bearer ${token}`
@@ -229,7 +341,21 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       })
       setSocket(socket)
 
-      socket.on('connect', () => console.log('[Socket] connected:', socket?.id))
+      // 首次连接由 selectedChat effect 负责加载历史；这里用闭包标志位区分「重连」，
+      // 仅在重连时为当前打开的会话补拉一次消息，消除断线期间漏掉的消息（步骤 2）。
+      let hasConnectedOnce = false
+      socket.on('connect', () => {
+        console.log('[Socket] connected:', socket?.id)
+        if (!hasConnectedOnce) {
+          hasConnectedOnce = true
+          return
+        }
+        const openChatId = selectedChatRef.current
+        const panel = activePanelRef.current
+        if (openChatId && (panel === 'chat' || panel === 'groups')) {
+          void loadMessages(openChatId, meId)
+        }
+      })
       socket.on('disconnect', (reason) => console.log('[Socket] disconnected:', reason))
       socket.on('connect_error', (err) => console.error('[Socket] connect_error:', err.message))
       socket.on('chat:connected', (d: { userId?: string }) => {
@@ -254,27 +380,21 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       socket.on('message:new', async (msg: ServerMessage) => {
         if (!msg?.id || !msg.roomId) return
         const isMe = msg.senderId === meId
-        const senderAvatar = await resolveAvatarUrl(msg.sender?.avatarUrl)
-        const local: LayoutMessage = {
-          id: msg.id,
-          chatId: msg.roomId,
-          content: msg.content || '',
-          time: formatHM(msg.createdAt),
-          sender: isMe ? 'me' : 'other',
-          senderName: msg.sender?.nickname || msg.sender?.username || '群成员',
-          senderAvatar
-        }
+        // 复用 mapServerMessage：一并解析头像 + 映射媒体 messageType/attachment
+        const local = await mapServerMessage(msg, meId)
         const isOpen = selectedChatRef.current === msg.roomId
 
         setChats((prev) => {
           const idx = prev.findIndex((c) => c.id === msg.roomId)
           const senderNick = msg.sender?.nickname || msg.sender?.username
           const isGroup = idx > -1 && prev[idx].type === 'group'
-          const preview = msg.content
-            ? isGroup
-              ? `${senderNick || ''}: ${msg.content}`
-              : msg.content
-            : ''
+          const preview = buildLastMessagePreview(
+            msg.messageType,
+            msg.content,
+            msg.fileName,
+            isGroup,
+            senderNick
+          )
           const base: LayoutChat =
             idx > -1
               ? prev[idx]
@@ -288,7 +408,7 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                 }
           const next: LayoutChat = {
             ...base,
-            avatar: base.avatar || (!isGroup ? senderAvatar : ''),
+            avatar: base.avatar || (!isGroup ? local.senderAvatar || '' : ''),
             lastMessage: preview,
             time: msg.createdAt,
             unread: isOpen || isMe ? undefined : (base.unread || 0) + 1
@@ -299,14 +419,20 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         if (isOpen) {
           setMessages((prev) => {
             if (prev.some((m) => m.id === local.id)) return prev
-            const cleaned = prev.filter(
-              (m) =>
-                !(
-                  m.id.startsWith('local-') &&
-                  m.chatId === local.chatId &&
-                  m.content === local.content
-                )
-            )
+            // 去重自身乐观消息：媒体优先按 objectName/fileUrl 精确匹配，避免多张空备注图片互删。
+            const cleaned = prev.filter((m) => {
+              const shouldRemove =
+                m.id.startsWith('local-') &&
+                m.chatId === local.chatId &&
+                (local.attachment?.objectName
+                  ? m.attachment?.objectName === local.attachment.objectName
+                  : m.content === local.content &&
+                    (m.messageType || 'TEXT') === (local.messageType || 'TEXT'))
+              if (shouldRemove && m.attachment?.localPreviewUrl) {
+                URL.revokeObjectURL(m.attachment.localPreviewUrl)
+              }
+              return !shouldRemove
+            })
             return [...cleaned, local]
           })
 
@@ -345,7 +471,7 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       socket?.disconnect()
       setSocket(null)
     }
-  }, [currentUserId, scheduleConversationRefresh, scheduleNotificationRefresh])
+  }, [currentUserId, scheduleConversationRefresh, scheduleNotificationRefresh, loadMessages])
 
   const markNotificationAsRead = useCallback(async (id: string): Promise<void> => {
     const res = await notificationService.markRead(id)
@@ -426,20 +552,200 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   }, [])
 
-  const handleOptimisticSend = useCallback(
+  const setMessageStatus = useCallback(
+    (messageId: string, status: MessageDeliveryStatus, errorMessage?: string): void => {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === messageId
+            ? { ...m, status, errorMessage: status === 'failed' ? errorMessage : undefined }
+            : m
+        )
+      )
+    },
+    []
+  )
+
+  // 发送消息的底层动作：依据 chatId/peerUserId 选事件，emit 时附带 ack 回调，
+  // 由 socket.io 的 .timeout() 在超时后以 Error 触发回调，从而驱动 sending → sent/failed。
+  // payload 泛化为文本/媒体通用：TEXT 仅 content；IMAGE/FILE 带 fileUrl 等媒体字段。
+  const emitAndWatchAck = useCallback(
+    (chatId: string, payload: SendPayload, localId: string): void => {
+      const sock = socket
+      if (!sock) return
+      const chat = chatsRef.current.find((c) => c.id === chatId)
+      if (!chat) return
+      const isGroup = chat.type === 'group'
+
+      const handleAck = (err: Error | null, ack?: SendAckResponse): void => {
+        // 后端 ack 可能是 DataResult，也可能直接回 message/空值。
+        // 媒体消息已先完成对象存储上传；部分后端不会调用 socket callback，导致 timeout。
+        // 因此媒体只在明确 result:false 时失败，避免成功图片被误标红点。
+        const isMedia = payload.messageType === 'IMAGE' || payload.messageType === 'FILE'
+        const ok = ack?.result !== false && (!err || isMedia)
+        if (ok) {
+          pendingFilesRef.current.delete(localId)
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === localId ? { ...m, status: 'sent', errorMessage: undefined } : m
+            )
+          )
+        } else {
+          setMessageStatus(localId, 'failed', ack?.message || err?.message || '发送失败')
+        }
+      }
+
+      if (isGroup) {
+        sock
+          .timeout(SEND_ACK_TIMEOUT_MS)
+          .emit('message:sendRoom', { roomId: chatId, ...payload }, handleAck)
+      } else {
+        if (!chat.peerUserId) {
+          setMessageStatus(localId, 'failed', '缺少私聊接收方，无法发送')
+          return
+        }
+        sock
+          .timeout(SEND_ACK_TIMEOUT_MS)
+          .emit('message:sendPrivate', { receiverId: chat.peerUserId, ...payload }, handleAck)
+      }
+    },
+    [socket, setMessageStatus]
+  )
+
+  // 乐观上屏 + 等待 ack：先以 status: 'sending' 立即插入本地消息，再发出带回执的 emit
+  const sendMessage = useCallback(
     (content: string): void => {
-      if (!selectedChat) return
+      const trimmed = content.trim()
+      const chatId = selectedChatRef.current
+      if (!trimmed || !chatId || !socket) return
+      const localId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
       const optimistic: LayoutMessage = {
-        id: `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        chatId: selectedChat,
-        content,
+        id: localId,
+        chatId,
+        content: trimmed,
         time: formatHM(new Date().toISOString()),
         sender: 'me',
-        senderName: '我'
+        senderName: '我',
+        status: 'sending'
       }
       setMessages((prev) => [...prev, optimistic])
+      emitAndWatchAck(chatId, { content: trimmed, messageType: 'TEXT' }, localId)
     },
-    [selectedChat]
+    [emitAndWatchAck, socket]
+  )
+
+  // 媒体上传后续：上传成功后回填 objectName/尺寸，切到 sending 并发出带回执的 emit
+  const runAttachmentUpload = useCallback(
+    async (localId: string, chatId: string, file: File, caption?: string): Promise<void> => {
+      try {
+        const prepared = await uploadMedia(file)
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === localId && m.attachment
+              ? {
+                  ...m,
+                  status: 'sending',
+                  attachment: {
+                    ...m.attachment,
+                    objectName: prepared.objectName,
+                    fileSize: prepared.fileSize,
+                    fileType: prepared.fileType,
+                    mediaWidth: prepared.mediaWidth,
+                    mediaHeight: prepared.mediaHeight,
+                    thumbnailUrl: prepared.thumbnailUrl
+                  }
+                }
+              : m
+          )
+        )
+        emitAndWatchAck(
+          chatId,
+          {
+            messageType: prepared.messageType,
+            content: caption || undefined,
+            fileUrl: prepared.objectName,
+            fileName: prepared.fileName,
+            fileSize: prepared.fileSize,
+            fileType: prepared.fileType,
+            mediaWidth: prepared.mediaWidth,
+            mediaHeight: prepared.mediaHeight,
+            thumbnailUrl: prepared.thumbnailUrl
+          },
+          localId
+        )
+      } catch (error) {
+        console.error('[Layout] 媒体上传失败:', error)
+        setMessageStatus(localId, 'failed', error instanceof Error ? error.message : '媒体上传失败')
+      }
+    },
+    [emitAndWatchAck, setMessageStatus]
+  )
+
+  // 发送媒体：先以 status: 'uploading' 乐观上屏（图片用 blob: 即时预览），
+  // 再异步上传 → 切 sending → 等待 ack。上传抛错即标 failed。
+  const sendAttachment = useCallback(
+    (file: File, caption?: string): void => {
+      const chatId = selectedChatRef.current
+      if (!chatId || !socket) return
+      const trimmedCaption = caption?.trim()
+      const isImage = isImageFile(file.name, file.type)
+      const messageType: LayoutMessageType = isImage ? 'IMAGE' : 'FILE'
+      const localId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      const optimistic: LayoutMessage = {
+        id: localId,
+        chatId,
+        content: trimmedCaption || '',
+        time: formatHM(new Date().toISOString()),
+        sender: 'me',
+        senderName: '我',
+        status: 'uploading',
+        messageType,
+        attachment: {
+          messageType,
+          localPreviewUrl: isImage ? URL.createObjectURL(file) : undefined,
+          fileName: file.name,
+          fileSize: file.size,
+          fileType: file.type || 'application/octet-stream'
+        }
+      }
+      setMessages((prev) => [...prev, optimistic])
+      pendingFilesRef.current.set(localId, file)
+      void runAttachmentUpload(localId, chatId, file, trimmedCaption || undefined)
+    },
+    [runAttachmentUpload, socket]
+  )
+
+  // 重发失败消息：按 attachment.objectName 是否存在分流——
+  // 已上传完成(socket 失败) → 仅重发，不重传，不产生 MinIO 孤儿对象；
+  // 上传未完成 → 用 pendingFilesRef 里的原始 File 重跑上传；文件丢失则放弃。
+  const retrySendMessage = useCallback(
+    (messageId: string): void => {
+      const target = messagesRef.current.find((m) => m.id === messageId)
+      if (!target || target.sender !== 'me' || !socket) return
+
+      if (target.attachment) {
+        if (target.attachment.objectName) {
+          setMessageStatus(messageId, 'sending')
+          emitAndWatchAck(
+            target.chatId,
+            mediaPayloadFromAttachment(target.attachment, target.content),
+            messageId
+          )
+        } else {
+          const file = pendingFilesRef.current.get(messageId)
+          if (!file) {
+            console.warn('[Layout] 重发失败：原始文件已丢失', messageId)
+            setMessageStatus(messageId, 'failed', '原始文件已丢失，请重新选择文件发送')
+            return
+          }
+          setMessageStatus(messageId, 'uploading')
+          void runAttachmentUpload(messageId, target.chatId, file, target.content || undefined)
+        }
+      } else {
+        setMessageStatus(messageId, 'sending')
+        emitAndWatchAck(target.chatId, { content: target.content, messageType: 'TEXT' }, messageId)
+      }
+    },
+    [emitAndWatchAck, runAttachmentUpload, setMessageStatus, socket]
   )
 
   const navigatePanel = useCallback(
@@ -565,75 +871,137 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     [chats]
   )
 
-  const value = useMemo<LayoutContextValue>(
+  const navigationValue = useMemo<NavigationContextValue>(
     () => ({
       activePanel,
-      currentUserId,
-      selectedChat,
       mobileChatOpen,
       mobileDetailOpen,
+      navigatePanel,
+      setActivePanelState,
+      handleBackToList
+    }),
+    [
+      activePanel,
+      mobileChatOpen,
+      mobileDetailOpen,
+      navigatePanel,
+      setActivePanelState,
+      handleBackToList
+    ]
+  )
+
+  const chatValue = useMemo<ChatContextValue>(
+    () => ({
+      currentUserId,
+      selectedChat,
       socket,
       chats,
       friendChats,
       groupChats,
       messages,
-      notifications,
-      favorites,
       clearedChat,
       unreadCount,
-      navigatePanel,
-      setActivePanelState,
       handleChatSelect,
-      handleBackToList,
       deleteChat,
       markChatAsRead,
       clearChatMessages,
       handleRefreshConversations,
-      handleOptimisticSend,
-      startChatWithFriend,
+      sendMessage,
+      sendAttachment,
+      retrySendMessage,
+      startChatWithFriend
+    }),
+    [
+      currentUserId,
+      selectedChat,
+      socket,
+      chats,
+      friendChats,
+      groupChats,
+      messages,
+      clearedChat,
+      unreadCount,
+      handleChatSelect,
+      deleteChat,
+      markChatAsRead,
+      clearChatMessages,
+      handleRefreshConversations,
+      sendMessage,
+      sendAttachment,
+      retrySendMessage,
+      startChatWithFriend
+    ]
+  )
+
+  const notificationsValue = useMemo<NotificationsContextValue>(
+    () => ({
+      notifications,
       markNotificationAsRead,
       markAllNotificationsAsRead,
       handleFriendRequest
     }),
-    [
-      activePanel,
-      currentUserId,
-      selectedChat,
-      mobileChatOpen,
-      mobileDetailOpen,
-      socket,
-      chats,
-      friendChats,
-      groupChats,
-      messages,
-      notifications,
-      favorites,
-      clearedChat,
-      navigatePanel,
-      setActivePanelState,
-      handleChatSelect,
-      handleBackToList,
-      deleteChat,
-      markChatAsRead,
-      clearChatMessages,
-      handleRefreshConversations,
-      handleOptimisticSend,
-      startChatWithFriend,
-      markNotificationAsRead,
-      markAllNotificationsAsRead,
-      handleFriendRequest,
-      unreadCount
-    ]
+    [notifications, markNotificationAsRead, markAllNotificationsAsRead, handleFriendRequest]
   )
 
-  return <LayoutContext.Provider value={value}>{children}</LayoutContext.Provider>
+  const favoritesValue = useMemo<FavoritesContextValue>(
+    () => ({
+      favorites
+    }),
+    [favorites]
+  )
+
+  const value = useMemo<LayoutContextValue>(
+    () => ({
+      ...navigationValue,
+      ...chatValue,
+      ...notificationsValue,
+      ...favoritesValue
+    }),
+    [navigationValue, chatValue, notificationsValue, favoritesValue]
+  )
+
+  return (
+    <LayoutContext.Provider value={value}>
+      <NavigationContext.Provider value={navigationValue}>
+        <ChatContext.Provider value={chatValue}>
+          <NotificationsContext.Provider value={notificationsValue}>
+            <FavoritesContext.Provider value={favoritesValue}>{children}</FavoritesContext.Provider>
+          </NotificationsContext.Provider>
+        </ChatContext.Provider>
+      </NavigationContext.Provider>
+    </LayoutContext.Provider>
+  )
+}
+
+function useRequiredContext<T>(context: React.Context<T | null>, name: string): T {
+  const value = useContext(context)
+  if (!value) {
+    throw new Error(`${name} must be used within LayoutProvider`)
+  }
+  return value
+}
+
+// eslint-disable-next-line react-refresh/only-export-components
+export function useNavigationContext(): NavigationContextValue {
+  return useRequiredContext(NavigationContext, 'useNavigationContext')
+}
+
+// eslint-disable-next-line react-refresh/only-export-components
+export function useChatContext(): ChatContextValue {
+  return useRequiredContext(ChatContext, 'useChatContext')
+}
+
+// eslint-disable-next-line react-refresh/only-export-components
+export function useNotificationsContext(): NotificationsContextValue {
+  return useRequiredContext(NotificationsContext, 'useNotificationsContext')
+}
+
+// eslint-disable-next-line react-refresh/only-export-components
+export function useFavoritesContext(): FavoritesContextValue {
+  return useRequiredContext(FavoritesContext, 'useFavoritesContext')
 }
 
 // eslint-disable-next-line react-refresh/only-export-components
 export function useLayoutContext(): LayoutContextValue {
-  const context = useContext(LayoutContext)
-  if (!context) {
-    throw new Error('useLayoutContext must be used within LayoutProvider')
-  }
-  return context
+  return useRequiredContext(LayoutContext, 'useLayoutContext')
 }

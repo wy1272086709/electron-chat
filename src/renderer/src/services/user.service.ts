@@ -157,11 +157,24 @@ export const userService = {
       }
     })
   },
-  async getPresignedUrl(filename: string) {
-    return request.get<{ url: string }>(`/minio/presignedUrl?name=${filename}`)
+  /**
+   * 获取对象存储预签名「上传」URL（PUT）。
+   * 用 params 让 axios 自动对 name 编码——name 可能含 `/`（如 `chat/20260710/x.png`），
+   * 旧实现用模板串拼接 query 会导致路径分隔符未编码而请求到错误 key。
+   */
+  async getPresignedUrl(name: string) {
+    return request.get<{ url: string }>('/minio/presignedUrl', { params: { name } })
   },
+  /**
+   * 获取对象存储预签名「预览/下载」URL（GET，内嵌展示）。
+   * 同样用 params 编码。name 为完整对象 key（不要像头像那样只取 basename）。
+   */
+  async getPreviewUrl(name: string) {
+    return request.get<{ url: string }>('/minio/previewUrl', { params: { name } })
+  },
+  /** 头像预览 URL：复用 getPreviewUrl（头像存的是对象 key，取 basename 后请求） */
   async getAvatarUrl(fileName: string) {
-    return request.get<{ url: string }>(`/minio/previewUrl?name=${fileName}`)
+    return this.getPreviewUrl(fileName)
   }
 }
 

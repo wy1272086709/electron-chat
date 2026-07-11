@@ -1,9 +1,10 @@
 import React, { useEffect } from 'react'
 import Contacts from '@renderer/components/contacts/Contacts'
-import { useLayoutContext } from '@renderer/context/LayoutContext'
+import { useChatContext, useNavigationContext } from '@renderer/context/LayoutContext'
 
 const ContactsRoute: React.FC = () => {
-  const { activePanel, setActivePanelState, startChatWithFriend } = useLayoutContext()
+  const { activePanel, setActivePanelState } = useNavigationContext()
+  const { startChatWithFriend } = useChatContext()
 
   useEffect(() => {
     if (activePanel !== 'contacts') {

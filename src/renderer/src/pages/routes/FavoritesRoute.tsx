@@ -1,9 +1,9 @@
 import React, { useEffect } from 'react'
 import Favorites from '@renderer/components/favorites/Favorites'
-import { useLayoutContext } from '@renderer/context/LayoutContext'
+import { useNavigationContext } from '@renderer/context/LayoutContext'
 
 const FavoritesRoute: React.FC = () => {
-  const { activePanel, setActivePanelState, favorites } = useLayoutContext()
+  const { activePanel, setActivePanelState } = useNavigationContext()
 
   useEffect(() => {
     if (activePanel !== 'favorites') {
@@ -13,7 +13,7 @@ const FavoritesRoute: React.FC = () => {
 
   return (
     <div className="right-panel active">
-      <Favorites favorites={favorites} />
+      <Favorites />
     </div>
   )
 }

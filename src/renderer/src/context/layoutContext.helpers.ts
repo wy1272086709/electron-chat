@@ -1,7 +1,16 @@
 import type { Conversation, ChatMessage as ServerMessage } from '@renderer/types/chat.types'
-import type { LayoutChat, LayoutMessage } from '@renderer/types/layout.types'
+import type {
+  LayoutChat,
+  LayoutMessage,
+  LayoutMessageType,
+  MessageAttachment
+} from '@renderer/types/layout.types'
 import { resolveAvatarUrl } from '@renderer/utils/avatar-url'
+import { isImageFile } from '@renderer/utils/file-meta'
 import type { StartChatFriendSnapshot } from './layoutContext.types'
+
+const LEGACY_FILE_MESSAGE_RE = /^\[文件:\s*(.+?)\]$/
+const LEGACY_IMAGE_MESSAGE_RE = /^\[图片:\s*(.+?)\]$/
 
 export const formatHM = (iso?: string | null): string => {
   if (!iso) return ''
@@ -27,7 +36,13 @@ export const mapConversation = (c: Conversation, meId: string | null): LayoutCha
   const peer = c.room.members?.find((m) => m.userId !== meId)?.user
   const lm = c.lastMessage
   const senderNick = lm?.sender?.nickname || lm?.sender?.username
-  const preview = lm?.content ? (isPrivate ? lm.content : `${senderNick || ''}: ${lm.content}`) : ''
+  const preview = buildLastMessagePreview(
+    lm?.messageType,
+    lm?.content,
+    lm?.fileName || undefined,
+    !isPrivate,
+    senderNick
+  )
   const unreadCount =
     typeof c.unreadCount === 'number' && c.unreadCount > 0 ? c.unreadCount : undefined
 
@@ -114,20 +129,80 @@ export const mapPrivateRoomFallback = async (
   }
 }
 
+/**
+ * 构造会话列表「最后一条消息」预览文本。
+ * 集中在此，避免历史加载 / message:new / 乐观发送三处各自拼接产生不一致。
+ * - IMAGE → [图片]
+ * - FILE  → [文件] <fileName>
+ * - 其它  → 原文 content
+ * 群聊额外前缀「发送者: 」（私聊不加，与微信一致）。
+ */
+export function buildLastMessagePreview(
+  messageType: string | undefined,
+  content: string | undefined | null,
+  fileName: string | undefined | null,
+  isGroup: boolean,
+  senderNick?: string | null
+): string {
+  const upper = messageType?.toUpperCase()
+  const legacyFileName = content?.match(LEGACY_FILE_MESSAGE_RE)?.[1]
+  const legacyImageName = content?.match(LEGACY_IMAGE_MESSAGE_RE)?.[1]
+  const fileLikeImage = isImageFile(fileName) || isImageFile(legacyFileName)
+  const body =
+    upper === 'IMAGE' || fileLikeImage
+      ? '[图片]'
+      : upper === 'FILE'
+        ? `[文件]${fileName ? ` ${fileName}` : ''}`
+        : legacyFileName
+          ? `[文件] ${legacyFileName}`
+          : legacyImageName
+            ? '[图片]'
+            : content || ''
+  return isGroup && senderNick && body ? `${senderNick}: ${body}` : body
+}
+
 export const mapServerMessage = async (
   m: ServerMessage,
   meId: string | null
 ): Promise<LayoutMessage> => {
   const senderAvatar = await resolveAvatarUrl(m.sender?.avatarUrl)
+  const upperType = m.messageType?.toUpperCase()
+  const legacyFileName = m.content?.match(LEGACY_FILE_MESSAGE_RE)?.[1]
+  const legacyImageName = m.content?.match(LEGACY_IMAGE_MESSAGE_RE)?.[1]
+  const mediaFileName = m.fileName || legacyFileName || legacyImageName || ''
+  const fileLikeImage = isImageFile(mediaFileName, m.fileType)
+  const messageType: LayoutMessageType =
+    upperType === 'IMAGE' || !!legacyImageName || fileLikeImage
+      ? 'IMAGE'
+      : upperType === 'FILE' || legacyFileName
+        ? 'FILE'
+        : 'TEXT'
+
+  const attachment: MessageAttachment | undefined =
+    messageType === 'IMAGE' || messageType === 'FILE'
+      ? {
+          messageType,
+          objectName:
+            m.fileUrl || (messageType === 'IMAGE' ? mediaFileName || undefined : undefined),
+          fileName: mediaFileName,
+          fileSize: m.fileSize ?? 0,
+          fileType: m.fileType || '',
+          mediaWidth: m.mediaWidth ?? undefined,
+          mediaHeight: m.mediaHeight ?? undefined,
+          thumbnailUrl: m.thumbnailUrl ?? undefined
+        }
+      : undefined
 
   return {
     id: m.id,
     chatId: m.roomId,
-    content: m.content || '',
+    content: legacyFileName || legacyImageName ? '' : m.content || '',
     time: formatHM(m.createdAt),
     sender: m.senderId === meId ? 'me' : 'other',
     senderName: m.sender?.nickname || m.sender?.username || '群成员',
-    senderAvatar
+    senderAvatar,
+    messageType,
+    attachment
   }
 }
 

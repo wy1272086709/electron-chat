@@ -2,8 +2,7 @@ import React, { useEffect } from 'react'
 import { useLocation } from 'react-router-dom'
 import ChatList from '@renderer/components/chat/ChatList'
 import ChatDetail from '@renderer/components/chat/ChatDetail'
-import { SocketContext } from '@renderer/context'
-import { useLayoutContext } from '@renderer/context/LayoutContext'
+import { useChatContext, useNavigationContext } from '@renderer/context/LayoutContext'
 
 interface ChatRouteProps {
   type: 'chat' | 'groups'
@@ -11,26 +10,24 @@ interface ChatRouteProps {
 
 const ChatRoute: React.FC<ChatRouteProps> = ({ type }) => {
   const location = useLocation()
+  const { activePanel, mobileChatOpen, mobileDetailOpen, setActivePanelState, handleBackToList } =
+    useNavigationContext()
   const {
-    activePanel,
     selectedChat,
-    mobileChatOpen,
-    mobileDetailOpen,
-    socket,
     chats,
     friendChats,
     groupChats,
     messages,
     clearedChat,
-    setActivePanelState,
     handleChatSelect,
     deleteChat,
     markChatAsRead,
     clearChatMessages,
     handleRefreshConversations,
-    handleBackToList,
-    handleOptimisticSend
-  } = useLayoutContext()
+    sendMessage,
+    sendAttachment,
+    retrySendMessage
+  } = useChatContext()
 
   useEffect(() => {
     if (activePanel !== type) {
@@ -66,16 +63,16 @@ const ChatRoute: React.FC<ChatRouteProps> = ({ type }) => {
 
       <div className={`right-panel ${mobileDetailOpen ? 'active' : ''}`}>
         {selectedChat ? (
-          <SocketContext.Provider value={{ socket }}>
-            <ChatDetail
-              chat={selectedChatDetail}
-              messages={messages.filter((m) => m.chatId === selectedChat)}
-              onBack={handleBackToList}
-              isMobile={window.innerWidth <= 768}
-              onCleared={clearedChat === selectedChat}
-              onSendMessage={handleOptimisticSend}
-            />
-          </SocketContext.Provider>
+          <ChatDetail
+            chat={selectedChatDetail}
+            messages={messages.filter((m) => m.chatId === selectedChat)}
+            onBack={handleBackToList}
+            isMobile={window.innerWidth <= 768}
+            onCleared={clearedChat === selectedChat}
+            onSendMessage={sendMessage}
+            onSendAttachment={sendAttachment}
+            onRetrySend={retrySendMessage}
+          />
         ) : (
           <div className="empty-chat-detail">
             <p>{emptyText}</p>

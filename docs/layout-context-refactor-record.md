@@ -57,7 +57,7 @@
 这次重构目标分两层：
 
 1. **先修正确性**：保证通讯录点击好友后一定能拿到 roomId、插入或保留会话项、跳转消息页、保持选中。
-2. **再降复杂度和渲染成本**：把纯 helper / 类型拆出去，稳定 action 引用，减少 Provider value 因函数引用变化造成的额外渲染。
+2. **再降复杂度和渲染成本**：把纯 helper / 类型拆出去，稳定 action 引用，并把一个大 Context 拆成多个更小的 Context，减少无关状态更新造成的额外渲染。
 
 ## 已做修改
 
@@ -70,9 +70,13 @@
 这个文件只放 Context 对外类型：
 
 - `StartChatFriendSnapshot`
+- `NavigationContextValue`
+- `ChatContextValue`
+- `NotificationsContextValue`
+- `FavoritesContextValue`
 - `LayoutContextValue`
 
-这样 `LayoutContext.tsx` 不再混杂大段接口声明，Provider 文件更聚焦于状态和副作用编排。
+这样 `LayoutContext.tsx` 不再混杂大段接口声明，Provider 文件更聚焦于状态和副作用编排，也方便后续页面按职责选择更窄的 hook。
 
 ### 2. 拆出 helper 文件
 
@@ -167,13 +171,45 @@
 
 如果当前面板列表没有这个会话，但总 `chats` 里有，就临时把它补到列表顶部。这样即使会话分类或刷新时序有问题，当前选中的会话也能显示并高亮。
 
+### 10. 拆分多个 Context
+
+在保留 `useLayoutContext()` 兼容层的前提下，新增了更小粒度的 Context：
+
+- `NavigationContext`：导航面板、移动端列表 / 详情状态、路由同步。
+- `ChatContext`：会话、消息、选中会话、会话操作、私聊启动。
+- `NotificationsContext`：通知列表、已读操作、好友申请处理。
+- `FavoritesContext`：收藏列表。
+
+Provider 内部现在会分别 memo：
+
+- `navigationValue`
+- `chatValue`
+- `notificationsValue`
+- `favoritesValue`
+
+然后再组合成旧的 `LayoutContextValue`，让旧的 `useLayoutContext()` 仍然可用。
+
+### 11. 路由迁移到更小的 hook
+
+已迁移当前几个主要路由：
+
+- `Layout.tsx` 使用 `useNavigationContext()` 和 `useChatContext()`，只读取导航状态和未读数。
+- `ChatRoute.tsx` 使用 `useNavigationContext()` 和 `useChatContext()`。
+- `ContactsRoute.tsx` 使用 `useNavigationContext()` 和 `useChatContext()`。
+- `NotificationsRoute.tsx` 使用 `useNavigationContext()` 和 `useNotificationsContext()`。
+- `FavoritesRoute.tsx` 使用 `useNavigationContext()` 和 `useFavoritesContext()`。
+
+这样通知页不会因为聊天消息变化而订阅整个大 value，收藏页也不会因为通知或聊天状态变化而被大 Context 牵连。
+
 ## 当前结果
 
-当前 `LayoutContext.tsx` 已从“类型 + helper + Provider 逻辑全在一个文件”改为：
+当前 `LayoutContext.tsx` 已从“类型 + helper + Provider 逻辑全在一个文件、所有消费者订阅同一个大 value”改为：
 
 - `LayoutContext.tsx`：保留 Provider、state、effect、action 编排。
 - `layoutContext.types.ts`：Context 对外类型。
 - `layoutContext.helpers.ts`：会话映射、消息映射、私聊兜底、列表合并等纯逻辑。
+- `NavigationContext`、`ChatContext`、`NotificationsContext`、`FavoritesContext`：按职责拆分订阅边界。
+- `useLayoutContext()`：保留兼容层，避免一次性打断旧调用。
 
 同时修复了通讯录点击好友后无法选中的多层问题：
 
@@ -203,34 +239,36 @@ npm run typecheck:web
 6. 对已有私聊和第一次创建私聊分别验证。
 7. 在窄屏宽度下再验证一次，确认详情面板直接打开。
 
-## 为什么没有一次性拆成多个 Context
+## Context 拆分策略
 
-确实，所有 state 聚合在一个 `LayoutContext` 中会带来性能问题。理想拆分方向是：
+所有 state 聚合在一个 `LayoutContext` 中会带来性能问题。拆分方向是：
 
 - `NavigationContext`：`activePanel`、移动端面板状态、路由切换。
 - `ChatContext`：`chats`、`messages`、`selectedChat`、会话操作。
-- `NotificationContext`：通知列表、通知已读、好友申请处理。
-- `SocketContext`：Socket 连接和实时事件。
+- `NotificationsContext`：通知列表、通知已读、好友申请处理。
 - `FavoritesContext`：收藏列表。
 
-但这次没有直接拆成多个 Provider，原因是风险控制：
+本轮已经完成内部拆分，并迁移主要路由使用更窄 hook。仍然保留 `useLayoutContext()` 的原因是风险控制：
 
-- 当前多个页面都通过 `useLayoutContext()` 读取混合状态。
-- 直接拆 Context 会影响 `Layout.tsx`、`ChatRoute.tsx`、`ContactsRoute.tsx`、`NotificationsRoute.tsx`、`FavoritesRoute.tsx` 等多个入口。
-- 这个 bug 的主路径在“通讯录 -> 私聊 -> 消息页选中”，先拆成多个 Provider 容易把行为变化和性能重构混在一起，增加回归风险。
+- 仍可能有后续组件或新增页面依赖旧 hook。
+- 保留兼容层可以让后续迁移按页面逐步推进。
+- 多 Context Provider 已经建立边界，迁移到窄 hook 的页面可以立即减少无关重渲染。
 
-因此本轮采用低风险重构：
+因此本轮采用渐进式重构：
 
 - 先拆纯类型和纯 helper。
 - 先稳定 action 引用。
 - 先修掉列表覆盖和路由竞态。
-- 保持 `useLayoutContext()` 对外 API 不变。
+- 再拆分多个 Context。
+- 迁移主要路由使用更窄 hook。
+- 保持 `useLayoutContext()` 对外 API 不变，作为兼容层。
 
 ## 后续建议
 
-下一轮如果继续优化性能，可以分两步：
+下一轮如果继续优化性能，可以做三件事：
 
-1. 内部先拆多个 Context Provider，但保留 `useLayoutContext()` 作为兼容层。
-2. 再逐个页面迁移到更小的 hook，例如 `useNavigationContext()`、`useChatContext()`、`useNotificationContext()`。
+1. 继续排查是否还有组件直接使用 `useLayoutContext()`，逐步迁移到更窄 hook。
+2. 将 Socket 连接和实时事件进一步拆到独立 `SocketProvider` 或 chat-specific hook 中。
+3. 给 `layoutContext.helpers.ts` 补单元测试，覆盖私聊识别、roomId 提取、本地兜底会话和会话列表合并。
 
-这样可以在不一次性改动所有消费者的情况下，逐步降低无关状态更新带来的重渲染。
+这样可以继续降低无关状态更新带来的重渲染，同时保持行为可控。

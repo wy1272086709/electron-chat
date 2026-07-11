@@ -134,6 +134,7 @@ export interface Conversation {
     id: string
     content?: string
     messageType?: string
+    fileName?: string | null
     senderId: string
     createdAt: string
     sender?: ChatUserBrief
@@ -162,6 +163,12 @@ export interface ChatMessage {
   messageType?: string
   fileUrl?: string | null
   fileName?: string | null
+  fileSize?: number | null
+  fileType?: string | null
+  thumbnailUrl?: string | null
+  mediaWidth?: number | null
+  mediaHeight?: number | null
+  duration?: number | null
   isDeleted?: boolean
   createdAt: string
   sender?: ChatUserBrief

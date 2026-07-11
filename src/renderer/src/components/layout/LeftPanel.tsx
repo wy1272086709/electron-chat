@@ -1,25 +1,26 @@
-import React, { useEffect } from 'react'
+import React from 'react'
 import AvaterSvg from '@renderer/assets/avatar.svg'
 import { useNavigate } from 'react-router-dom'
 import { secureStorageService } from '@renderer/services/secure-storage.service'
-import { getAvatarUrl } from '@renderer/hooks/util'
 import type { AppPanel } from '@renderer/types/layout.types'
+import type { Profile } from '@renderer/hooks/useProfile'
 
 interface LeftPanelProps {
   activePanel: AppPanel
   setActivePanel: (panel: AppPanel) => void
   unreadCount: number
   setShowProfileModal: (show: boolean) => void
+  profile: Profile
 }
 
 const LeftPanel: React.FC<LeftPanelProps> = ({
   activePanel,
   setActivePanel,
   unreadCount,
-  setShowProfileModal
+  setShowProfileModal,
+  profile
 }) => {
   const navigate = useNavigate()
-  const [avatarUrl, setAvatarUrl] = React.useState<string | null>(null)
   const navItems: Array<{
     id: AppPanel
     icon: React.ReactNode
@@ -74,16 +75,6 @@ const LeftPanel: React.FC<LeftPanelProps> = ({
     }
   ]
 
-  useEffect(() => {
-    const fetchAvatarUrl: () => Promise<string | null> = async () => {
-      const url = await getAvatarUrl()
-      console.log(url)
-      setAvatarUrl(url || null)
-      return url
-    }
-    fetchAvatarUrl()
-  }, [])
-
   return (
     <div className="left-panel">
       {/* Navigation Items */}
@@ -106,13 +97,12 @@ const LeftPanel: React.FC<LeftPanelProps> = ({
       {/* Profile Section */}
       <div className="profile-section">
         <div className="profile-avatar" onClick={() => setShowProfileModal(true)} title="个人资料">
-          <img src={avatarUrl || AvaterSvg} alt="Profile" />
+          <img src={profile.avatar || AvaterSvg} alt="Profile" />
         </div>
         <div
           className="logout-button"
           onClick={async () => {
             // 使用安全存储服务清除登录状态
-            console.log('Logging out...')
             secureStorageService.clearAuthData()
             console.log('Current path before navigation:', window.location.pathname)
             navigate('/login', { replace: true })

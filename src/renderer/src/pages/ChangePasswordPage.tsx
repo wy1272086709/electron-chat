@@ -29,7 +29,7 @@ const ChangePasswordPage: React.FC = () => {
     return undefined
   }, [countdown])
 
-  const validateForm = () => {
+  const validateForm: () => boolean = () => {
     if (!username || !email || !verificationCode || !newPassword || !confirmPassword) {
       setError('所有字段都必须填写')
       return false

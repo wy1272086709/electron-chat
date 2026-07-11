@@ -38,7 +38,18 @@ if (process.contextIsolated) {
             console.error('文件选择错误:', error)
             throw error
           })
-      }
+      },
+      // 媒体上传：把文件字节 PUT 到预签名 URL（由主进程执行，绕过 CORS）
+      uploadFile: (payload: {
+        presignedUrl: string
+        arrayBuffer: ArrayBuffer
+        contentType: string
+      }) => ipcRenderer.invoke('upload-file', payload),
+      // 媒体下载：流式写入系统下载目录
+      downloadFile: (payload: { previewUrl: string; fileName: string }) =>
+        ipcRenderer.invoke('download-file', payload),
+      // 打开已下载到本地的文件
+      openLocalFile: (payload: { path: string }) => ipcRenderer.invoke('open-local-file', payload)
     })
 
     // 添加安全存储 API

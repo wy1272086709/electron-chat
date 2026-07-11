@@ -1,83 +1,241 @@
-/**
- * 收藏服务（本地占位实现）
- *
- * 后端收藏接口尚未提供，这里先用 localStorage 做本地持久化，
- * 形态上对齐其它 service（async + ElectronResponse），便于后续直接替换为真实 HTTP 调用。
- *
- * TODO（接口就绪后）：
- *   1. 将下列方法改为经 request 调用后端收藏接口；
- *   2. 与 Favorites 面板打通：让 LayoutProvider 的收藏列表改由本服务读取，
- *      而不再使用本地 mock。
- */
+import { request, type ElectronResponse } from './request'
+import { formatFileSize, getFileExt } from '@renderer/utils/file-meta'
 
-import type { ElectronResponse } from './request'
+export type FavoriteItemType = 'text' | 'image' | 'file' | 'chat'
+export type FavoriteApiType = 'MESSAGE' | 'IMAGE' | 'VIDEO' | 'FILE' | 'CHAT_RECORD'
 
-/** 收藏项：在 LayoutProvider/Favorites 的 Favorite 结构基础上增加 messageId，用于判断「某条消息是否已收藏」 */
+export interface FavoriteApiItem {
+  id: string
+  type: FavoriteApiType
+  targetId: string
+  userId?: string
+  sourceType?: string | null
+  sourceId?: string | null
+  sourceName?: string | null
+  roomId?: string | null
+  title?: string | null
+  content?: string | null
+  fileUrl?: string | null
+  fileName?: string | null
+  fileSize?: number | null
+  fileType?: string | null
+  thumbnailUrl?: string | null
+  mediaWidth?: number | null
+  mediaHeight?: number | null
+  duration?: number | null
+  extra?: Record<string, unknown> | null
+  collectedAt?: string
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface CreateFavoritePayload {
+  type: FavoriteApiType
+  targetId: string
+  sourceType?: string
+  sourceId?: string
+  sourceName?: string
+  roomId?: string
+  title?: string
+  content?: string
+  fileUrl?: string
+  fileName?: string
+  fileSize?: number
+  fileType?: string
+  thumbnailUrl?: string
+  mediaWidth?: number
+  mediaHeight?: number
+  duration?: number
+  extra?: Record<string, unknown>
+}
+
 export interface FavoriteItem {
   id: string
-  type: 'message' | 'file'
+  type: FavoriteItemType
   title: string
   content?: string
+  fileUrl?: string
   fileName?: string
+  fileSize?: string
+  fileExt?: string
+  fileType?: string
+  thumbnail?: string
+  source: string
   time: string
+  expiresAt?: string
   chatId?: string
-  /** 来源消息 ID（消息类收藏必填，作为去重 / 取消收藏的依据） */
   messageId?: string
+  targetId: string
+  apiType: FavoriteApiType
 }
 
-const STORAGE_KEY = 'ec_favorites'
+interface FavoriteListParams {
+  type?: FavoriteApiType
+  take?: number
+}
 
-function loadAll(): FavoriteItem[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    return raw ? (JSON.parse(raw) as FavoriteItem[]) : []
-  } catch {
-    return []
+interface LegacyFavoriteDraft {
+  type: FavoriteItemType
+  messageId?: string
+  targetId?: string
+  title?: string
+  content?: string
+  source?: string
+  chatId?: string
+  fileName?: string
+  fileSize?: string
+  fileExt?: string
+  thumbnail?: string
+  time?: string
+}
+
+const favoriteCache = new Map<string, FavoriteItem>()
+const FILE_FAVORITE_TTL_MS = 365 * 24 * 60 * 60 * 1000
+
+function toApiType(type: FavoriteItemType): FavoriteApiType {
+  if (type === 'text') return 'MESSAGE'
+  if (type === 'file') return 'FILE'
+  if (type === 'chat') return 'CHAT_RECORD'
+  return 'IMAGE'
+}
+
+export function toFavoriteApiType(type: FavoriteItemType): FavoriteApiType {
+  return toApiType(type)
+}
+
+function toItemType(type: FavoriteApiType): FavoriteItemType {
+  if (type === 'MESSAGE') return 'text'
+  if (type === 'FILE') return 'file'
+  if (type === 'CHAT_RECORD') return 'chat'
+  return 'image'
+}
+
+function getTitle(item: FavoriteApiItem): string {
+  if (item.title?.trim()) return item.title
+  if (item.fileName?.trim()) return item.fileName
+  if (item.content?.trim()) return item.content
+  return '收藏内容'
+}
+
+function getExtraString(extra: FavoriteApiItem['extra'], key: string): string | undefined {
+  const value = extra?.[key]
+  return typeof value === 'string' ? value : undefined
+}
+
+function getFileExpiresAt(item: FavoriteApiItem): string | undefined {
+  if (item.type !== 'FILE') return undefined
+  const savedExpiresAt = getExtraString(item.extra, 'expiresAt')
+  if (savedExpiresAt) return savedExpiresAt
+
+  const collectedAt = item.collectedAt || item.createdAt
+  const start = collectedAt ? new Date(collectedAt) : new Date()
+  if (Number.isNaN(start.getTime())) return undefined
+  return new Date(start.getTime() + FILE_FAVORITE_TTL_MS).toISOString()
+}
+
+function mapFavorite(item: FavoriteApiItem): FavoriteItem {
+  const type = toItemType(item.type)
+  return {
+    id: item.id,
+    type,
+    title: getTitle(item),
+    content: item.content || undefined,
+    fileUrl: item.fileUrl || undefined,
+    fileName: item.fileName || undefined,
+    fileSize: formatFileSize(item.fileSize),
+    fileExt: getFileExt(item.fileName, item.fileType),
+    fileType: item.fileType || undefined,
+    thumbnail: item.thumbnailUrl || item.fileUrl || undefined,
+    source: item.sourceName || item.sourceType || '收藏',
+    time: item.collectedAt || item.createdAt || '',
+    expiresAt: getFileExpiresAt(item),
+    chatId: item.roomId || item.sourceId || undefined,
+    messageId: item.type === 'CHAT_RECORD' ? undefined : item.targetId,
+    targetId: item.targetId,
+    apiType: item.type
   }
 }
 
-function saveAll(list: FavoriteItem[]): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(list))
-  } catch {
-    // 写入失败（如隐私模式 / 配额）静默忽略，避免阻断交互
-  }
+function remember(items: FavoriteItem[]): void {
+  items.forEach((item) => {
+    favoriteCache.set(item.id, item)
+    if (item.messageId) favoriteCache.set(item.messageId, item)
+    favoriteCache.set(`${item.apiType}:${item.targetId}`, item)
+  })
 }
 
-/** 生成稳定且唯一的收藏 id（渲染进程下可用 Date.now） */
-function genId(): string {
-  return `fav_${Date.now()}_${Math.floor(Math.random() * 1e6)}`
+function isCreateFavoritePayload(
+  item: CreateFavoritePayload | LegacyFavoriteDraft
+): item is CreateFavoritePayload {
+  return (
+    item.type === 'MESSAGE' ||
+    item.type === 'IMAGE' ||
+    item.type === 'VIDEO' ||
+    item.type === 'FILE' ||
+    item.type === 'CHAT_RECORD'
+  )
 }
 
 export const favoriteService = {
-  /** 获取全部收藏（新的在前） */
-  async list(): Promise<ElectronResponse<FavoriteItem[]>> {
-    return { result: true, data: loadAll(), code: 0 }
+  async list(params: FavoriteListParams = {}): Promise<ElectronResponse<FavoriteItem[]>> {
+    const res = await request.get<FavoriteApiItem[]>('/favorites', {
+      params: {
+        ...(params.type ? { type: params.type } : {}),
+        ...(params.take ? { take: params.take } : {})
+      }
+    })
+    const data = res.data ? res.data.map(mapFavorite) : []
+    remember(data)
+    return { ...res, data }
   },
 
-  /** 某条消息是否已收藏（同步读，便于组装右键菜单时即时判断） */
   isFavoritedSync(messageId: string): boolean {
-    return loadAll().some((f) => f.messageId === messageId)
+    return favoriteCache.has(messageId)
   },
 
-  /** 新增收藏（同一条消息按 messageId 去重） */
   async add(
-    item: Omit<FavoriteItem, 'id'> & { id?: string }
+    item: CreateFavoritePayload | LegacyFavoriteDraft
   ): Promise<ElectronResponse<FavoriteItem>> {
-    const list = loadAll()
-    if (item.messageId) {
-      const existed = list.find((f) => f.messageId === item.messageId)
-      if (existed) return { result: true, data: existed, code: 0 }
+    const payload: CreateFavoritePayload = isCreateFavoritePayload(item)
+      ? item
+      : {
+          type: toApiType(item.type),
+          targetId: item.messageId || item.targetId || '',
+          title: item.title,
+          content: item.content,
+          sourceName: item.source,
+          roomId: item.chatId
+        }
+
+    if (payload.type === 'FILE') {
+      payload.extra = {
+        ...payload.extra,
+        expiresAt:
+          typeof payload.extra?.expiresAt === 'string'
+            ? payload.extra.expiresAt
+            : new Date(Date.now() + FILE_FAVORITE_TTL_MS).toISOString()
+      }
     }
-    const created: FavoriteItem = { ...item, id: item.id ?? genId() }
-    list.unshift(created)
-    saveAll(list)
-    return { result: true, data: created, code: 0 }
+
+    const res = await request.post<FavoriteApiItem>('/favorites', payload)
+    const data = res.data ? mapFavorite(res.data) : null
+    if (data) remember([data])
+    return { ...res, data }
   },
 
-  /** 按来源消息 ID 移除收藏 */
-  async removeByMessage(messageId: string): Promise<ElectronResponse<null>> {
-    saveAll(loadAll().filter((f) => f.messageId !== messageId))
-    return { result: true, data: null, code: 0 }
+  async remove(type: FavoriteApiType, targetId: string): Promise<ElectronResponse<FavoriteItem>> {
+    const res = await request.post<FavoriteApiItem>('/favorites/remove', { type, targetId })
+    const data = res.data ? mapFavorite(res.data) : null
+    if (data) {
+      favoriteCache.delete(data.id)
+      if (data.messageId) favoriteCache.delete(data.messageId)
+      favoriteCache.delete(`${data.apiType}:${data.targetId}`)
+    }
+    return { ...res, data }
+  },
+
+  async removeByMessage(messageId: string): Promise<ElectronResponse<FavoriteItem>> {
+    const cached = favoriteCache.get(messageId)
+    return this.remove(cached?.apiType || 'MESSAGE', cached?.targetId || messageId)
   }
 }

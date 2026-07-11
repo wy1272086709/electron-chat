@@ -1,12 +1,15 @@
-import React, { useState, useRef, useEffect, useContext } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 import EmojiPicker from '@renderer/components/chat/EmojiPicker'
-import FilePicker from '@renderer/components/chat/FilePicker'
+import MessageMedia from '@renderer/components/chat/MessageMedia'
+import MediaPreviewModal from '@renderer/components/chat/MediaPreviewModal'
 import GroupAvatar from '@renderer/components/groups/GroupAvatar'
 import MessageContextMenu, {
   type MessageMenuItem
 } from '@renderer/components/chat/MessageContextMenu'
 import FriendAvatar from '@renderer/assets/friend_avatar.svg'
-import { SocketContext } from '@renderer/context'
+import type { LayoutMessage } from '@renderer/types/layout.types'
+import { resolveMediaUrl } from '@renderer/utils/media-url'
+import { isImageFile } from '@renderer/utils/file-meta'
 import { favoriteService } from '@renderer/services/favorite.service'
 
 interface Chat {
@@ -23,14 +26,9 @@ interface Chat {
   peerUserId?: string
 }
 
-interface Message {
-  id: string
-  content: string
-  time: string
-  sender: 'me' | 'other'
-  senderName?: string
-  senderAvatar?: string
-}
+// 直接复用 LayoutMessage：消息来自 LayoutContext，已含 chatId / 媒体字段。
+// 保留别名 Message 以减少组件内对消息类型的散落引用。
+type Message = LayoutMessage
 
 interface ChatDetailProps {
   chat: Chat | undefined
@@ -38,8 +36,12 @@ interface ChatDetailProps {
   onBack?: () => void
   isMobile?: boolean
   onCleared?: boolean
-  /** 发送消息时回调（父组件乐观插入，让消息立即上屏） */
+  /** 发送消息回调（父组件负责乐观上屏 + ack 状态机，子组件不再直接操作 socket） */
   onSendMessage?: (content: string) => void
+  /** 发送图片 / 文件回调（父组件负责上传 + 乐观上屏 + ack） */
+  onSendAttachment?: (file: File, caption?: string) => void
+  /** 重发失败消息 */
+  onRetrySend?: (messageId: string) => void
 }
 
 const ChatDetail: React.FC<ChatDetailProps> = ({
@@ -48,15 +50,21 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
   onBack,
   isMobile = false,
   onCleared,
-  onSendMessage
+  onSendMessage,
+  onSendAttachment,
+  onRetrySend
 }) => {
   const [newMessage, setNewMessage] = useState('')
   const [showEmojiPicker, setShowEmojiPicker] = useState(false)
-  const [showFilePicker, setShowFilePicker] = useState(false)
+  // 发送前图片预览（含可选备注）
+  const [imagePreview, setImagePreview] = useState<{ file: File } | null>(null)
+  // 放大查看图片
+  const [lightbox, setLightbox] = useState<{ src: string } | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const imageInputRef = useRef<HTMLInputElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const isGroup = chat?.type === 'group'
   const headerStatus = isGroup ? `${chat.memberCount ?? 0} 名成员` : '在线'
-  const { socket } = useContext(SocketContext)
 
   // 单条消息右键菜单：记录触发位置与目标消息
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; message: Message } | null>(
@@ -75,7 +83,7 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
     scrollToBottom()
   }, [messages, onCleared])
 
-  // 初始加载本地已收藏的消息 ID（收藏接口暂未提供，先读 localStorage）
+  // 初始加载已收藏的消息 ID，用于右键菜单即时切换「收藏 / 取消收藏」
   useEffect(() => {
     let active = true
     favoriteService.list().then((res) => {
@@ -97,27 +105,12 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
 
   const handleSendMessage: () => void = () => {
     const content = newMessage.trim()
-    if (!content || !chat || !socket) return
-    // 群聊走 message:sendRoom；私聊走 message:sendPrivate（receiverId 为对方 userId）
-    if (isGroup) {
-      socket.emit('message:sendRoom', { roomId: chat.id, content, messageType: 'TEXT' })
-    } else {
-      if (!chat.peerUserId) {
-        console.warn('[ChatDetail] 缺少对方 userId，无法发送私聊消息')
-        return
-      }
-      socket.emit('message:sendPrivate', {
-        receiverId: chat.peerUserId,
-        content,
-        messageType: 'TEXT'
-      })
-    }
-    // 乐观上屏：服务端通常不把 message:new 回推给发送者本人，
-    // 这里先本地插入，等对方消息或本人回执到达时由 LayoutProvider 去重替换
+    if (!content || !chat) return
+    // 发送（含乐观上屏 + ack 状态机）下沉到 LayoutProvider：子组件不再直接操作 socket，
+    // 只负责把文本交给回调。群/私聊的区分由 LayoutProvider 依据当前会话类型处理。
     onSendMessage?.(content)
     setNewMessage('')
     setShowEmojiPicker(false)
-    setShowFilePicker(false)
   }
 
   const handleKeyPress = (e: React.KeyboardEvent): void => {
@@ -132,11 +125,74 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
     setShowEmojiPicker(false)
   }
 
-  const handleFileSelect = (filePath: string): void => {
-    // 在实际应用中，这里应该处理文件上传
-    const fileName = filePath.split('/').pop()
-    setNewMessage((prev) => prev + `[文件: ${fileName}]`)
-    setShowFilePicker(false)
+  // 选图：弹预览（带备注）；文件直接发送。重置 value 以便重复选同一文件。
+  const handleImagePicked = (e: React.ChangeEvent<HTMLInputElement>): void => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    if (!file.type.startsWith('image/')) {
+      showToast('请选择图片文件')
+      return
+    }
+    setImagePreview({ file })
+  }
+
+  const handleFilePicked = (e: React.ChangeEvent<HTMLInputElement>): void => {
+    const files = Array.from(e.target.files || [])
+    e.target.value = ''
+    if (files.length === 0) return
+    files.forEach((f) => onSendAttachment?.(f))
+  }
+
+  const handleSendImagePreview = (caption: string): void => {
+    if (!imagePreview?.file) return
+    onSendAttachment?.(imagePreview.file, caption)
+    setImagePreview(null)
+  }
+
+  // 粘贴图片：在输入框粘贴截图时，拦截并进入图片预览
+  const handlePaste = (e: React.ClipboardEvent): void => {
+    const items = e.clipboardData?.items
+    if (!items) return
+    for (let i = 0; i < items.length; i += 1) {
+      const item = items[i]
+      if (item.kind === 'file' && item.type.startsWith('image/')) {
+        const file = item.getAsFile()
+        if (file) {
+          setImagePreview({ file })
+          e.preventDefault()
+          return
+        }
+      }
+    }
+  }
+
+  // 拖拽：单张图片进预览，其余（多图 / 文件）直接发送
+  const handleDrop = (e: React.DragEvent): void => {
+    const files = Array.from(e.dataTransfer?.files || [])
+    if (files.length === 0) return
+    e.preventDefault()
+    if (files.length === 1 && files[0].type.startsWith('image/')) {
+      setImagePreview({ file: files[0] })
+      return
+    }
+    files.forEach((f) => onSendAttachment?.(f))
+  }
+
+  // 另存为：解析对象存储预签名 GET，交主进程下载到本地下载目录
+  const handleSaveImage = async (message: Message): Promise<void> => {
+    const objectName = message.attachment?.objectName
+    if (!objectName) return
+    const previewUrl = await resolveMediaUrl(objectName)
+    if (!previewUrl) {
+      showToast('图片加载失败')
+      return
+    }
+    const res = await window.electronAPI.downloadFile({
+      previewUrl,
+      fileName: message.attachment?.fileName || `image-${message.id}`
+    })
+    showToast(res.result ? '已保存到下载目录' : res.message || '保存失败')
   }
 
   // 操作反馈轻提示（复制 / 收藏等）：覆盖式显示，由上方 effect 在 1.5s 后自动清除
@@ -175,9 +231,18 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
 
   const handleToggleFavorite = async (message: Message): Promise<void> => {
     const senderName = message.senderName || (isGroup ? '群成员' : chat?.name) || '消息'
+    const favoriteType =
+      message.messageType === 'IMAGE' ? 'image' : message.messageType === 'FILE' ? 'file' : 'text'
+    const favoriteTitle =
+      message.attachment?.fileName ||
+      (message.messageType === 'IMAGE' ? '图片' : message.content || senderName)
     try {
       if (favoritedIds.has(message.id)) {
-        await favoriteService.removeByMessage(message.id)
+        const res = await favoriteService.removeByMessage(message.id)
+        if (!res.result) {
+          showToast(res.message || '取消收藏失败')
+          return
+        }
         setFavoritedIds((prev) => {
           const next = new Set(prev)
           next.delete(message.id)
@@ -185,17 +250,26 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
         })
         showToast('已取消收藏')
       } else {
-        // TODO: 收藏接口暂未提供，先写入本地（favorite.service 基于 localStorage）。
-        //   接口就绪后直接替换 favorite.service 内部实现即可；
-        //   与 Favorites 面板的打通（列表改由本服务读取）作为后续步骤。
-        await favoriteService.add({
-          type: 'message',
+        const res = await favoriteService.add({
+          type: favoriteType,
           messageId: message.id,
-          title: senderName,
+          title: favoriteTitle,
           content: message.content,
+          source: chat?.name || senderName,
           time: message.time,
-          chatId: chat?.id
+          chatId: chat?.id,
+          fileName: message.attachment?.fileName,
+          fileSize:
+            typeof message.attachment?.fileSize === 'number'
+              ? String(message.attachment.fileSize)
+              : undefined,
+          fileExt: message.attachment?.fileType,
+          thumbnail: message.attachment?.objectName
         })
+        if (!res.result) {
+          showToast(res.message || '收藏失败')
+          return
+        }
         setFavoritedIds((prev) => new Set(prev).add(message.id))
         showToast('已收藏')
       }
@@ -207,7 +281,7 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
   // 组装单条消息的右键菜单项（根据是否已收藏切换文案 / 图标）
   const buildMessageMenuItems = (message: Message): MessageMenuItem[] => {
     const favorited = favoritedIds.has(message.id)
-    return [
+    const items: MessageMenuItem[] = [
       {
         key: 'copy',
         label: '复制',
@@ -248,11 +322,43 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
         onClick: () => handleToggleFavorite(message)
       }
     ]
+    // 图片消息额外提供「另存为」（下载到本地下载目录）
+    if (message.messageType === 'IMAGE' && message.attachment?.objectName) {
+      items.push({
+        key: 'save',
+        label: '另存为',
+        icon: (
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line x1="12" y1="15" x2="12" y2="3" />
+          </svg>
+        ),
+        onClick: () => void handleSaveImage(message)
+      })
+    }
+    return items
   }
 
   const handleMessageContextMenu = (e: React.MouseEvent, message: Message): void => {
     e.preventDefault()
     setContextMenu({ x: e.clientX, y: e.clientY, message })
+  }
+
+  const handleRetryClick = (message: Message): void => {
+    if (message.errorMessage) {
+      showToast(message.errorMessage)
+    }
+    onRetrySend?.(message.id)
   }
 
   if (!chat) {
@@ -299,15 +405,26 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
       </div>
 
       {/* Messages */}
-      <div className="messages-container">
+      <div
+        className="messages-container"
+        onDrop={handleDrop}
+        onDragOver={(e) => e.preventDefault()}
+      >
         {messages.map((message) => {
           const senderName = message.senderName || (isGroup ? '群成员' : chat.name)
           const messageAvatar =
             message.senderAvatar || (!isGroup ? chat.avatar : '') || FriendAvatar
+          const hasMedia = Boolean(message.attachment)
+          const mediaLooksLikeImage =
+            message.messageType === 'IMAGE' ||
+            isImageFile(message.attachment?.fileName, message.attachment?.fileType)
+          const mediaClass = hasMedia
+            ? `has-media ${mediaLooksLikeImage ? 'is-image' : 'is-file'}`
+            : ''
           return (
             <div
               key={message.id}
-              className={`message ${message.sender === 'me' ? 'sent' : 'received'}`}
+              className={`message ${message.sender === 'me' ? 'sent' : 'received'} ${mediaClass}`}
               onContextMenu={(e) => handleMessageContextMenu(e, message)}
             >
               {message.sender === 'other' && (
@@ -325,8 +442,40 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
                 {isGroup && message.sender === 'other' && (
                   <div className="message-sender">{senderName}</div>
                 )}
-                <div className="message-content">{message.content}</div>
+                <div className={`message-content ${mediaClass}`}>
+                  {hasMedia ? (
+                    <>
+                      <MessageMedia
+                        message={message}
+                        onPreviewImage={(src) => setLightbox({ src })}
+                      />
+                      {message.content && (
+                        <div className="message-media-caption">{message.content}</div>
+                      )}
+                    </>
+                  ) : (
+                    message.content
+                  )}
+                </div>
               </div>
+              {message.sender === 'me' &&
+                (message.status === 'sending' || message.status === 'uploading') && (
+                  <span
+                    className="message-status is-sending"
+                    aria-label={message.status === 'uploading' ? '上传中' : '发送中'}
+                    title={message.status === 'uploading' ? '上传中' : '发送中'}
+                  />
+                )}
+              {message.sender === 'me' && message.status === 'failed' && (
+                <button
+                  type="button"
+                  className="message-status is-failed"
+                  title={message.errorMessage || '发送失败，点击重试'}
+                  onClick={() => handleRetryClick(message)}
+                >
+                  !
+                </button>
+              )}
               <div className="message-time">{message.time}</div>
             </div>
           )
@@ -347,8 +496,17 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
         </button>
         <button
           className="input-action-button"
-          title="文件"
-          onClick={() => setShowFilePicker(true)}
+          title="发送图片"
+          onClick={() => imageInputRef.current?.click()}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M21 19V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z" />
+          </svg>
+        </button>
+        <button
+          className="input-action-button"
+          title="发送文件"
+          onClick={() => fileInputRef.current?.click()}
         >
           <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
             <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z" />
@@ -356,10 +514,11 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
         </button>
         <textarea
           className="message-input"
-          placeholder="输入消息..."
+          placeholder="输入消息...（可粘贴图片、拖入文件）"
           value={newMessage}
           onChange={(e) => setNewMessage(e.target.value)}
           onKeyPress={handleKeyPress}
+          onPaste={handlePaste}
           rows={1}
         />
         <button className="send-button" onClick={handleSendMessage} disabled={!newMessage.trim()}>
@@ -374,9 +533,23 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
         <EmojiPicker onSelect={handleEmojiSelect} onClose={() => setShowEmojiPicker(false)} />
       )}
 
-      {/* 文件选择器 */}
-      {showFilePicker && (
-        <FilePicker onSelect={handleFileSelect} onClose={() => setShowFilePicker(false)} />
+      {/* 隐藏的文件选择 input：图片走预览，文件直接发送 */}
+      <input type="file" accept="image/*" hidden ref={imageInputRef} onChange={handleImagePicked} />
+      <input type="file" hidden ref={fileInputRef} onChange={handleFilePicked} multiple />
+
+      {/* 发送前图片预览（含可选备注） */}
+      {imagePreview && (
+        <MediaPreviewModal
+          mode="send"
+          file={imagePreview.file}
+          onSend={handleSendImagePreview}
+          onClose={() => setImagePreview(null)}
+        />
+      )}
+
+      {/* 放大查看图片 */}
+      {lightbox && (
+        <MediaPreviewModal mode="view" src={lightbox.src} onClose={() => setLightbox(null)} />
       )}
 
       {/* 单条消息右键菜单（复制 / 收藏） */}
@@ -475,6 +648,49 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
         .send-button:disabled {
           opacity: 0.5;
           cursor: not-allowed;
+        }
+
+        .message-status {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          align-self: flex-end;
+          margin-bottom: 4px;
+          margin-right: 4px;
+          flex-shrink: 0;
+        }
+
+        .message-status.is-sending {
+          width: 14px;
+          height: 14px;
+          border: 2px solid #6b7280;
+          border-top-color: transparent;
+          border-radius: 50%;
+          animation: message-status-spin 0.8s linear infinite;
+        }
+
+        .message-status.is-failed {
+          width: 18px;
+          height: 18px;
+          padding: 0;
+          border: none;
+          border-radius: 50%;
+          background: #ef4444;
+          color: #fff;
+          font-size: 12px;
+          font-weight: 700;
+          line-height: 1;
+          cursor: pointer;
+        }
+
+        .message-status.is-failed:hover {
+          background: #dc2626;
+        }
+
+        @keyframes message-status-spin {
+          to {
+            transform: rotate(360deg);
+          }
         }
         .chat-header-profile {
           display: flex;

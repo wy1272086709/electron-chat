@@ -1,15 +1,22 @@
 import React from 'react'
-import { useProfile } from '@renderer/hooks/useProfile'
+import type { ChangeEvent, FormEvent } from 'react'
+import type { Profile } from '@renderer/hooks/useProfile'
 
 interface ProfileModalProps {
   onClose: () => void
+  profile: Profile
+  handleInputChange: (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void
+  handleAvatarChange: (e: ChangeEvent<HTMLInputElement>) => void
+  handleSubmit: (e: FormEvent) => void
 }
 
-const ProfileModal: React.FC<ProfileModalProps> = ({ onClose }) => {
-  const { profile, handleInputChange, handleAvatarChange, handleSubmit } = useProfile({
-    onSubmitSuccess: onClose
-  })
-
+const ProfileModal: React.FC<ProfileModalProps> = ({
+  onClose,
+  profile,
+  handleInputChange,
+  handleAvatarChange,
+  handleSubmit
+}) => {
   return (
     <div className="profile-modal">
       <div className="profile-modal-content">
