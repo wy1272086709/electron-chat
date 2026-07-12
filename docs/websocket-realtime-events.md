@@ -19,16 +19,74 @@ token 来自 `secureStorageService.getAccessToken()`。
 
 前端已监听这些后端事件：
 
-| 事件名           | 用途             | 前端行为                                               |
-| ---------------- | ---------------- | ------------------------------------------------------ |
-| `chat:connected` | 连接鉴权成功     | 保存当前用户 ID 用于判断消息发送方                     |
-| `chat:error`     | 连接或鉴权异常   | 打印错误日志                                           |
-| `message:new`    | 新消息到达       | 更新会话预览、未读数；当前打开房间时追加消息并标记已读 |
-| `message:sent`   | 发送成功回执     | 刷新会话列表                                           |
-| `room:created`   | 新群聊创建       | 刷新会话列表                                           |
-| `room:private`   | 私聊创建或复用   | 刷新会话列表                                           |
-| `room:read`      | 房间已读状态变化 | 刷新会话列表和未读数                                   |
-| `room:cleared`   | 房间清空         | 刷新会话列表                                           |
+| 事件名                               | 用途             | 前端行为                                               |
+| ------------------------------------ | ---------------- | ------------------------------------------------------ |
+| `chat:connected`                     | 连接鉴权成功     | 保存当前用户 ID 用于判断消息发送方                     |
+| `chat:error`                         | 连接或鉴权异常   | 打印错误日志                                           |
+| `message:new`                        | 新消息到达       | 更新会话预览、未读数；当前打开房间时追加消息并标记已读 |
+| `message:sent`                       | 发送成功回执     | 刷新会话列表                                           |
+| `room:created`                       | 新群聊创建       | 刷新会话列表                                           |
+| `room:private`                       | 私聊创建或复用   | 刷新会话列表                                           |
+| `room:read`                          | 房间已读状态变化 | 刷新会话列表和未读数                                   |
+| `room:cleared`                       | 房间清空         | 刷新会话列表                                           |
+| `presence:update`                    | 好友在线状态变化 | 更新私聊会话的在线 / 离线状态                          |
+| `user:online` / `presence:online`    | 用户上线         | 更新对应私聊会话为在线                                 |
+| `user:offline` / `presence:offline`  | 用户离线         | 更新对应私聊会话为离线，并记录最后在线时间             |
+| `room:presence` / `room:onlineCount` | 群聊在线人数变化 | 更新对应群聊会话的在线人数                             |
+
+## 在线状态规范
+
+后端推荐用 Redis 承载实时在线状态，用数据库承载最后在线时间：
+
+- Redis：记录 `userId -> socket 连接数 / 设备数 / TTL`，用于判断 `isOnline`。
+- 数据库：记录 `lastSeenAt`，用于离线后展示「X 分钟前在线」。
+- Socket 连接成功：写 Redis 在线状态。
+- Socket 断开：减少连接数；如果该用户没有其他连接，更新 Redis 离线并写数据库 `lastSeenAt`。
+- 异常断线：依赖 Redis TTL / heartbeat 兜底，避免用户永久在线。
+
+会话列表 `GET /chat/rooms` 的私聊对方用户资料建议带：
+
+```jsonc
+{
+  "user": {
+    "id": "userB",
+    "username": "b",
+    "nickname": "小B",
+    "avatarUrl": null,
+    "isOnline": true,
+    "lastSeenAt": "2026-07-12T10:00:00.000Z"
+  }
+}
+```
+
+实时事件 payload 建议：
+
+```jsonc
+{ "userId": "userB", "isOnline": false, "lastSeenAt": "2026-07-12T10:00:00.000Z" }
+```
+
+前端同时兼容 `online`、`status: "online" | "offline"`、`lastOnlineAt`、`lastActiveAt` 字段。
+
+群聊会话建议带：
+
+```jsonc
+{
+  "room": {
+    "id": "room1",
+    "name": "我的群聊1",
+    "memberCount": 120,
+    "onlineCount": 8
+  }
+}
+```
+
+群聊在线人数实时事件 payload 建议：
+
+```jsonc
+{ "roomId": "room1", "onlineCount": 8, "memberCount": 120 }
+```
+
+前端同时兼容 `onlineMemberCount` 字段。
 
 ## 通知事件规范
 

@@ -9,11 +9,6 @@
 import { request, type ElectronResponse } from './request'
 import type { AppNotification, NotificationAction } from '../types/notification.types'
 
-/** markAllRead 返回的是 Prisma updateMany 结果 */
-export interface MarkAllReadResult {
-  count: number
-}
-
 /**
  * 通知服务
  */
@@ -31,11 +26,6 @@ export const notificationService = {
   /** 标记单条已读 POST /notifications/markRead */
   async markRead(notificationId: string): Promise<ElectronResponse<AppNotification>> {
     return request.post<AppNotification>('/notifications/markRead', { notificationId })
-  },
-
-  /** 标记全部已读 POST /notifications/markAllRead */
-  async markAllRead(): Promise<ElectronResponse<MarkAllReadResult>> {
-    return request.post<MarkAllReadResult>('/notifications/markAllRead')
   },
 
   /** 处理好友申请（同意 / 拒绝）POST /notifications/handleFriendRequest */

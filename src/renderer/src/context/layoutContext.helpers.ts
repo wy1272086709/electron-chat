@@ -12,6 +12,14 @@ import type { StartChatFriendSnapshot } from './layoutContext.types'
 const LEGACY_FILE_MESSAGE_RE = /^\[文件:\s*(.+?)\]$/
 const LEGACY_IMAGE_MESSAGE_RE = /^\[图片:\s*(.+?)\]$/
 
+type PresenceSource = {
+  isOnline?: boolean | null
+  online?: boolean | null
+  lastSeenAt?: string | null
+  lastOnlineAt?: string | null
+  lastActiveAt?: string | null
+}
+
 export const formatHM = (iso?: string | null): string => {
   if (!iso) return ''
   const d = new Date(iso)
@@ -31,9 +39,30 @@ const isPrivateConversation = (c: Conversation, meId: string | null): boolean =>
   return members.length === 2 && !!peer && c.room.name.includes(':')
 }
 
+const readOnline = (...sources: Array<PresenceSource | undefined | null>): boolean | undefined => {
+  for (const source of sources) {
+    if (!source) continue
+    if (typeof source.isOnline === 'boolean') return source.isOnline
+    if (typeof source.online === 'boolean') return source.online
+  }
+  return undefined
+}
+
+const readLastSeenAt = (
+  ...sources: Array<PresenceSource | undefined | null>
+): string | undefined => {
+  for (const source of sources) {
+    if (!source) continue
+    const value = source.lastSeenAt || source.lastOnlineAt || source.lastActiveAt
+    if (typeof value === 'string' && value) return value
+  }
+  return undefined
+}
+
 export const mapConversation = (c: Conversation, meId: string | null): LayoutChat => {
   const isPrivate = isPrivateConversation(c, meId)
-  const peer = c.room.members?.find((m) => m.userId !== meId)?.user
+  const peerMember = c.room.members?.find((m) => m.userId !== meId)
+  const peer = peerMember?.user
   const lm = c.lastMessage
   const senderNick = lm?.sender?.nickname || lm?.sender?.username
   const preview = buildLastMessagePreview(
@@ -53,9 +82,11 @@ export const mapConversation = (c: Conversation, meId: string | null): LayoutCha
     lastMessage: preview,
     time: lm?.createdAt || '',
     unread: unreadCount,
-    isOnline: false,
+    isOnline: isPrivate ? readOnline(peerMember, peer) : undefined,
+    lastSeenAt: isPrivate ? readLastSeenAt(peerMember, peer) : undefined,
     type: isPrivate ? 'chat' : 'group',
-    memberCount: isPrivate ? undefined : c.room.members?.length,
+    memberCount: isPrivate ? undefined : (c.room.memberCount ?? c.room.members?.length),
+    onlineCount: isPrivate ? undefined : (c.room.onlineCount ?? undefined),
     peerUserId: isPrivate ? peer?.id : undefined
   }
 }
@@ -94,7 +125,22 @@ export const mapPrivateRoomFallback = async (
 ): Promise<LayoutChat> => {
   type PrivateRoomMember = {
     userId?: string
-    user?: { id?: string; username?: string; nickname?: string | null; avatarUrl?: string | null }
+    isOnline?: boolean | null
+    online?: boolean | null
+    lastSeenAt?: string | null
+    lastOnlineAt?: string | null
+    lastActiveAt?: string | null
+    user?: {
+      id?: string
+      username?: string
+      nickname?: string | null
+      avatarUrl?: string | null
+      isOnline?: boolean | null
+      online?: boolean | null
+      lastSeenAt?: string | null
+      lastOnlineAt?: string | null
+      lastActiveAt?: string | null
+    }
   }
 
   let roomName: string | undefined
@@ -123,7 +169,8 @@ export const mapPrivateRoomFallback = async (
     avatar,
     lastMessage: '',
     time: '',
-    isOnline: false,
+    isOnline: friend.isOnline ?? readOnline(peerMember, peer),
+    lastSeenAt: friend.lastSeenAt ?? readLastSeenAt(peerMember, peer),
     type: 'chat',
     peerUserId: peer?.id || peerMember?.userId || friend.id
   }
@@ -213,8 +260,25 @@ export const mergeConversationList = (
   previous: LayoutChat[],
   selectedChatId: string | null
 ): LayoutChat[] => {
-  if (!selectedChatId || incoming.some((chat) => chat.id === selectedChatId)) return incoming
+  const previousById = new Map(previous.map((chat) => [chat.id, chat]))
+  const merged = incoming.map((chat) => {
+    const previousChat = previousById.get(chat.id)
+    if (chat.type !== 'chat') {
+      return {
+        ...chat,
+        onlineCount: chat.onlineCount ?? previousChat?.onlineCount
+      }
+    }
+    return {
+      ...chat,
+      isOnline: chat.isOnline ?? previousChat?.isOnline,
+      lastSeenAt: chat.lastSeenAt ?? previousChat?.lastSeenAt,
+      onlineCount: chat.onlineCount ?? previousChat?.onlineCount
+    }
+  })
+
+  if (!selectedChatId || merged.some((chat) => chat.id === selectedChatId)) return merged
 
   const selectedFallback = previous.find((chat) => chat.id === selectedChatId)
-  return selectedFallback ? [selectedFallback, ...incoming] : incoming
+  return selectedFallback ? [selectedFallback, ...merged] : merged
 }

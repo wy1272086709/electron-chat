@@ -10,14 +10,14 @@
 
 ### 1.1 基础信息
 
-| 项 | 值 |
-|---|---|
-| 全局前缀 | `/api`（来自 `GLOBAL_PREFIX`，默认 `/api`） |
-| 控制器前缀 | `/api/chat`（`@Controller('chat')`） |
-| 鉴权 | 全局 `JwtAuthGuard`，请求头携带 `Authorization: Bearer <token>` |
-| 当前用户 | `@CurrentUser() user: ChatUser`，从 JWT 解析，所有接口均依赖 `user.id` |
-| 内容类型 | `application/json`（POST/GET body） |
-| Swagger | 启动后见 `http://localhost:3000/docs`，分组 `Chat` |
+| 项         | 值                                                                     |
+| ---------- | ---------------------------------------------------------------------- |
+| 全局前缀   | `/api`（来自 `GLOBAL_PREFIX`，默认 `/api`）                            |
+| 控制器前缀 | `/api/chat`（`@Controller('chat')`）                                   |
+| 鉴权       | 全局 `JwtAuthGuard`，请求头携带 `Authorization: Bearer <token>`        |
+| 当前用户   | `@CurrentUser() user: ChatUser`，从 JWT 解析，所有接口均依赖 `user.id` |
+| 内容类型   | `application/json`（POST/GET body）                                    |
+| Swagger    | 启动后见 `http://localhost:3000/docs`，分组 `Chat`                     |
 
 ### 1.2 响应格式（两条处理路径，字段统一用 `result`）
 
@@ -57,11 +57,11 @@
 }
 ```
 
-| 错误来源 | 形态 | 典型 HTTP | 典型 `message` |
-|---|---|---|---|
-| DTO 校验失败（`ValidationPipe`） | ③ | 400 | `name: 群聊名称不能为空` |
-| 未登录 / token 失效（`JwtAuthGuard`） | ③ | 401 | `Token 已过期，请重新登录` |
-| 非房间成员等（Service 抛 `ForbiddenException` 等） | ② | **200** | `你不是该聊天的成员` |
+| 错误来源                                           | 形态 | 典型 HTTP | 典型 `message`             |
+| -------------------------------------------------- | ---- | --------- | -------------------------- |
+| DTO 校验失败（`ValidationPipe`）                   | ③    | 400       | `name: 群聊名称不能为空`   |
+| 未登录 / token 失效（`JwtAuthGuard`）              | ③    | 401       | `Token 已过期，请重新登录` |
+| 非房间成员等（Service 抛 `ForbiddenException` 等） | ②    | **200**   | `你不是该聊天的成员`       |
 
 > ⚠️ **对接提示**：判断成败统一看 `result` 字段即可。需注意 `code` 的语义差异：业务错误（形态②）因 Controller `try/catch` + 拦截器强制 `status(200)`，`code` 恒为 200、HTTP 状态码也恒为 200，不可靠；校验 / 鉴权 / 系统错误（形态③）的 `code` 是真实 4xx/5xx，且响应会多带一个 `path` 字段。
 
@@ -83,15 +83,15 @@
 
 ## 2. 接口一览
 
-| # | 方法 | 路径 | 说明 | 实时事件副作用 |
-|---|---|---|---|---|
-| 3.1 | POST | `/api/chat/rooms/group` | 创建群聊房间 | 向所有成员推 `room:created` |
-| 3.2 | POST | `/api/chat/rooms/private` | 发起 / 获取私聊会话 | 向双方推 `room:private` |
-| 3.3 | GET | `/api/chat/rooms` | 当前用户的会话列表 | 无 |
-| 3.4 | GET | `/api/chat/rooms/:roomId/messages` | 分页历史消息 | 无 |
-| 3.5 | GET | `/api/chat/rooms/:roomId/members` | 房间成员列表 | 无 |
-| 3.6 | POST | `/api/chat/rooms/:roomId/read` | 标记房间已读 | 向房间推 `room:read` |
-| 3.7 | POST | `/api/chat/rooms/:roomId/clear` | 清空本人聊天记录（软清空） | 无 |
+| #   | 方法 | 路径                               | 说明                       | 实时事件副作用              |
+| --- | ---- | ---------------------------------- | -------------------------- | --------------------------- |
+| 3.1 | POST | `/api/chat/rooms/group`            | 创建群聊房间               | 向所有成员推 `room:created` |
+| 3.2 | POST | `/api/chat/rooms/private`          | 发起 / 获取私聊会话        | 向双方推 `room:private`     |
+| 3.3 | GET  | `/api/chat/rooms`                  | 当前用户的会话列表         | 无                          |
+| 3.4 | GET  | `/api/chat/rooms/:roomId/messages` | 分页历史消息               | 无                          |
+| 3.5 | GET  | `/api/chat/rooms/:roomId/members`  | 房间成员列表               | 无                          |
+| 3.6 | POST | `/api/chat/rooms/:roomId/read`     | 标记房间已读               | 向房间推 `room:read`        |
+| 3.7 | POST | `/api/chat/rooms/:roomId/clear`    | 清空本人聊天记录（软清空） | 无                          |
 
 > 「实时事件副作用」指 Controller 内部调用 `ChatGateway` 的推送方法（[chat.gateway.ts](../src/chat/chat.gateway.ts) `emitToUsers` / `emitToRoom`），让走 HTTP 的操作也能同步到在线 WebSocket 客户端。
 
@@ -105,22 +105,24 @@
 
 **请求体** `CreateGroupRoomDto`：
 
-| 字段 | 类型 | 必填 | 校验 | 说明 |
-|---|---|---|---|---|
-| `name` | string | ✅ | 非空字符串 | 群聊名称 |
-| `description` | string | ❌ | — | 群聊描述 |
-| `memberIds` | string[] | ❌ | 字符串数组 | 初始成员用户 ID（创建者自动加入并成为 `OWNER`，无需重复传入） |
+| 字段          | 类型     | 必填 | 校验       | 说明                                                          |
+| ------------- | -------- | ---- | ---------- | ------------------------------------------------------------- |
+| `name`        | string   | ✅   | 非空字符串 | 群聊名称                                                      |
+| `description` | string   | ❌   | —          | 群聊描述                                                      |
+| `memberIds`   | string[] | ❌   | 字符串数组 | 初始成员用户 ID（创建者自动加入并成为 `OWNER`，无需重复传入） |
 
 **成功响应** `data`：`ChatRoom & { members: RoomMember[] }`
 
 ```jsonc
 {
-  "result": true, "code": 200, "message": "群聊创建成功",
+  "result": true,
+  "code": 200,
+  "message": "群聊创建成功",
   "data": {
     "id": "clxxxxx",
     "name": "技术交流群",
     "description": "可选",
-    "topic": null,                 // ChatRoom.topic，非会话类型；会话类型看下文 topic 说明
+    "topic": null, // ChatRoom.topic，非会话类型；会话类型看下文 topic 说明
     "maxMembers": null,
     "createdBy": "userA",
     "ownerId": "userA",
@@ -128,8 +130,24 @@
     "createdAt": "2026-06-26T10:00:00.000Z",
     "updatedAt": "2026-06-26T10:00:00.000Z",
     "members": [
-      { "id": "m1", "roomId": "clxxxxx", "userId": "userA", "role": "OWNER",  "status": "ACTIVE", "joinedAt": "...", "lastReadAt": null },
-      { "id": "m2", "roomId": "clxxxxx", "userId": "userB", "role": "MEMBER", "status": "ACTIVE", "joinedAt": "...", "lastReadAt": null }
+      {
+        "id": "m1",
+        "roomId": "clxxxxx",
+        "userId": "userA",
+        "role": "OWNER",
+        "status": "ACTIVE",
+        "joinedAt": "...",
+        "lastReadAt": null
+      },
+      {
+        "id": "m2",
+        "roomId": "clxxxxx",
+        "userId": "userB",
+        "role": "MEMBER",
+        "status": "ACTIVE",
+        "joinedAt": "...",
+        "lastReadAt": null
+      }
     ]
   }
 }
@@ -151,9 +169,9 @@
 
 **请求体** `InitPrivateRoomDto`：
 
-| 字段 | 类型 | 必填 | 校验 | 说明 |
-|---|---|---|---|---|
-| `receiverId` | string | ✅ | 非空字符串 | 对方用户 ID |
+| 字段         | 类型   | 必填 | 校验       | 说明        |
+| ------------ | ------ | ---- | ---------- | ----------- |
+| `receiverId` | string | ✅   | 非空字符串 | 对方用户 ID |
 
 **成功响应** `data`：`ChatRoom & { members: RoomMember[] }`（已存在则返回既有房间，幂等）。
 
@@ -161,10 +179,10 @@
 
 **业务错误**（形态②，HTTP 200）：
 
-| 触发条件 | `message` |
-|---|---|
-| `receiverId` 等于自己 | `不能给自己发送私聊消息`（Conflict） |
-| `receiverId` 对应用户不存在 | `接收者不存在`（NotFound） |
+| 触发条件                    | `message`                            |
+| --------------------------- | ------------------------------------ |
+| `receiverId` 等于自己       | `不能给自己发送私聊消息`（Conflict） |
+| `receiverId` 对应用户不存在 | `接收者不存在`（NotFound）           |
 
 ---
 
@@ -180,19 +198,40 @@
 
 ```jsonc
 {
-  "result": true, "code": 200, "message": "会话列表获取成功",
+  "result": true,
+  "code": 200,
+  "message": "会话列表获取成功",
   "data": [
     {
       "room": {
-        "id": "room1", "name": "...", "topic": "GROUP",
-        "members": [{ "userId": "...", "user": { "id": "...", "username": "...", "nickname": "...", "avatarUrl": null } }]
+        "id": "room1",
+        "name": "...",
+        "topic": "GROUP",
+        "memberCount": 120,
+        "onlineCount": 8,
+        "members": [
+          {
+            "userId": "...",
+            "user": {
+              "id": "...",
+              "username": "...",
+              "nickname": "...",
+              "avatarUrl": null,
+              "isOnline": true,
+              "lastSeenAt": "2026-06-26T10:00:00.000Z"
+            }
+          }
+        ]
       },
       "role": "MEMBER",
       "lastReadAt": "2026-06-26T10:00:00.000Z",
       "clearedAt": null,
       "lastMessage": {
-        "id": "msg1", "content": "在吗", "messageType": "TEXT",
-        "senderId": "userB", "createdAt": "...",
+        "id": "msg1",
+        "content": "在吗",
+        "messageType": "TEXT",
+        "senderId": "userB",
+        "createdAt": "...",
         "sender": { "id": "userB", "username": "...", "nickname": "...", "avatarUrl": null }
       },
       "unreadCount": 3
@@ -203,13 +242,13 @@
 
 **字段说明**：
 
-| 字段 | 说明 |
-|---|---|
-| `room` | 房间信息（含 `members[].user` 简要资料） |
-| `role` | 当前用户在该房间的角色（`OWNER` / `MEMBER`） |
-| `lastReadAt` | 当前用户在该房间的最后已读时间，未读时为 `null` |
-| `clearedAt` | 当前用户在该房间的清空时间点，未清空为 `null` |
-| `lastMessage` | 晚于 `clearedAt` 的最近一条未删除消息，无则为 `null` |
+| 字段          | 说明                                                                                            |
+| ------------- | ----------------------------------------------------------------------------------------------- |
+| `room`        | 房间信息（含 `members[].user` 简要资料）                                                        |
+| `role`        | 当前用户在该房间的角色（`OWNER` / `MEMBER`）                                                    |
+| `lastReadAt`  | 当前用户在该房间的最后已读时间，未读时为 `null`                                                 |
+| `clearedAt`   | 当前用户在该房间的清空时间点，未清空为 `null`                                                   |
+| `lastMessage` | 晚于 `clearedAt` 的最近一条未删除消息，无则为 `null`                                            |
 | `unreadCount` | 未读数：房间内 `senderId != 自己`、未删除，且 `createdAt > max(lastReadAt, clearedAt)` 的消息数 |
 
 **实时事件**：无。
@@ -222,10 +261,10 @@
 
 **请求参数**：
 
-| 位置 | 字段 | 类型 | 必填 | 校验 | 说明 |
-|---|---|---|---|---|---|
-| path | `roomId` | string | ✅ | — | 房间 ID |
-| query | `take` | number | ❌ | 整数，1~100 | 条数，默认 50 |
+| 位置  | 字段     | 类型   | 必填 | 校验        | 说明          |
+| ----- | -------- | ------ | ---- | ----------- | ------------- |
+| path  | `roomId` | string | ✅   | —           | 房间 ID       |
+| query | `take`   | number | ❌   | 整数，1~100 | 条数，默认 50 |
 
 **返回顺序**：`createdAt desc`（新的在前），并自动过滤 `isDeleted=false` 且晚于 `clearedAt` 的消息。
 
@@ -233,14 +272,28 @@
 
 ```jsonc
 {
-  "result": true, "code": 200, "message": "历史消息获取成功",
+  "result": true,
+  "code": 200,
+  "message": "历史消息获取成功",
   "data": [
     {
-      "id": "msg1", "roomId": "room1", "senderId": "userB",
-      "content": "在吗", "messageType": "TEXT",
-      "fileUrl": null, "fileName": null, "fileSize": null, "fileType": null,
-      "thumbnailUrl": null, "mediaWidth": null, "mediaHeight": null, "duration": null,
-      "isEdited": false, "editedAt": null, "isDeleted": false, "deletedAt": null,
+      "id": "msg1",
+      "roomId": "room1",
+      "senderId": "userB",
+      "content": "在吗",
+      "messageType": "TEXT",
+      "fileUrl": null,
+      "fileName": null,
+      "fileSize": null,
+      "fileType": null,
+      "thumbnailUrl": null,
+      "mediaWidth": null,
+      "mediaHeight": null,
+      "duration": null,
+      "isEdited": false,
+      "editedAt": null,
+      "isDeleted": false,
+      "deletedAt": null,
       "createdAt": "2026-06-26T10:00:00.000Z",
       "sender": { "id": "userB", "username": "b", "nickname": "小B", "avatarUrl": null }
     }
@@ -258,9 +311,9 @@
 
 **请求参数**：
 
-| 位置 | 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| path | `roomId` | string | ✅ | 房间 ID |
+| 位置 | 字段     | 类型   | 必填 | 说明    |
+| ---- | -------- | ------ | ---- | ------- |
+| path | `roomId` | string | ✅   | 房间 ID |
 
 **返回顺序**：`joinedAt asc`（按入群时间正序）。
 
@@ -268,12 +321,18 @@
 
 ```jsonc
 {
-  "result": true, "code": 200, "message": "成员列表获取成功",
+  "result": true,
+  "code": 200,
+  "message": "成员列表获取成功",
   "data": [
     {
-      "id": "m1", "roomId": "room1", "userId": "userA",
-      "role": "OWNER", "status": "ACTIVE",
-      "joinedAt": "2026-06-26T09:00:00.000Z", "lastReadAt": "2026-06-26T10:00:00.000Z",
+      "id": "m1",
+      "roomId": "room1",
+      "userId": "userA",
+      "role": "OWNER",
+      "status": "ACTIVE",
+      "joinedAt": "2026-06-26T09:00:00.000Z",
+      "lastReadAt": "2026-06-26T10:00:00.000Z",
       "user": { "id": "userA", "username": "a", "nickname": "小A", "avatarUrl": null }
     }
   ]
@@ -292,18 +351,23 @@
 
 **请求参数**：
 
-| 位置 | 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| path | `roomId` | string | ✅ | 房间 ID |
+| 位置 | 字段     | 类型   | 必填 | 说明    |
+| ---- | -------- | ------ | ---- | ------- |
+| path | `roomId` | string | ✅   | 房间 ID |
 
 **成功响应** `data`：更新后的 `RoomMember`（**不含** `user` 嵌套）
 
 ```jsonc
 {
-  "result": true, "code": 200, "message": "已读设置成功",
+  "result": true,
+  "code": 200,
+  "message": "已读设置成功",
   "data": {
-    "id": "m1", "roomId": "room1", "userId": "userA",
-    "role": "OWNER", "status": "ACTIVE",
+    "id": "m1",
+    "roomId": "room1",
+    "userId": "userA",
+    "role": "OWNER",
+    "status": "ACTIVE",
     "joinedAt": "2026-06-26T09:00:00.000Z",
     "lastReadAt": "2026-06-26T10:00:01.234Z"
   }
@@ -324,16 +388,23 @@
 
 **请求参数**：
 
-| 位置 | 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|---|
-| path | `roomId` | string | ✅ | 房间 ID |
+| 位置 | 字段     | 类型   | 必填 | 说明    |
+| ---- | -------- | ------ | ---- | ------- |
+| path | `roomId` | string | ✅   | 房间 ID |
 
 **成功响应** `data`：`ChatClearState`
 
 ```jsonc
 {
-  "result": true, "code": 200, "message": "聊天记录已清空",
-  "data": { "id": "cs1", "roomId": "room1", "userId": "userA", "clearedAt": "2026-06-26T10:00:00.000Z" }
+  "result": true,
+  "code": 200,
+  "message": "聊天记录已清空",
+  "data": {
+    "id": "cs1",
+    "roomId": "room1",
+    "userId": "userA",
+    "clearedAt": "2026-06-26T10:00:00.000Z"
+  }
 }
 ```
 
@@ -345,13 +416,16 @@
 
 ## 4. 数据结构速查
 
-| 模型 | 关键字段 |
-|---|---|
-| `ChatRoom` | `id`, `name`, `description?`, `topic?`, `maxMembers?`, `createdBy`, `ownerId`, `isArchived`, `createdAt`, `updatedAt` |
-| `RoomMember` | `id`, `roomId`, `userId`, `joinedAt`, `role`(OWNER\|MEMBER), `status`(ACTIVE\|…), `lastReadAt?` |
-| `Message` | `id`, `roomId`, `senderId`, `content?`, `messageType`(TEXT\|IMAGE\|FILE\|AUDIO\|VIDEO), `fileUrl?`, `fileName?`, `fileSize?`, `fileType?`, `thumbnailUrl?`, `mediaWidth?`, `mediaHeight?`, `duration?`, `isEdited`, `editedAt?`, `isDeleted`, `deletedAt?`, `createdAt` |
-| `ChatClearState` | `id`, `roomId`, `userId`, `clearedAt` |
-| 用户简要资料（`sender` / `user`） | `id`, `username`, `nickname`, `avatarUrl?` |
+| 模型                              | 关键字段                                                                                                                                                                                                                                                                |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ChatRoom`                        | `id`, `name`, `description?`, `topic?`, `maxMembers?`, `createdBy`, `ownerId`, `isArchived`, `createdAt`, `updatedAt`                                                                                                                                                   |
+| `RoomMember`                      | `id`, `roomId`, `userId`, `joinedAt`, `role`(OWNER\|MEMBER), `status`(ACTIVE\|…), `lastReadAt?`                                                                                                                                                                         |
+| `Message`                         | `id`, `roomId`, `senderId`, `content?`, `messageType`(TEXT\|IMAGE\|FILE\|AUDIO\|VIDEO), `fileUrl?`, `fileName?`, `fileSize?`, `fileType?`, `thumbnailUrl?`, `mediaWidth?`, `mediaHeight?`, `duration?`, `isEdited`, `editedAt?`, `isDeleted`, `deletedAt?`, `createdAt` |
+| `ChatClearState`                  | `id`, `roomId`, `userId`, `clearedAt`                                                                                                                                                                                                                                   |
+| 用户简要资料（`sender` / `user`） | `id`, `username`, `nickname`, `avatarUrl?`, `isOnline?`, `lastSeenAt?`                                                                                                                                                                                                  |
+
+> 在线状态建议由后端在 `listConversations` 中从 Redis 批量读取后填充 `members[].user.isOnline`；`lastSeenAt` 来自数据库，用于离线展示。
+> 群聊在线人数建议由后端在 `listConversations` 中从 Redis 统计后填充 `room.onlineCount`；`room.memberCount` 可由数据库成员关系聚合得到。
 
 > 注：私聊房间的 `name` 为两端用户 ID 排序后用 `:` 拼接（如 `userA:userB`），以此保证同一对用户私聊房间唯一（见 [getPrivateRoomName](../src/chat/chat.service.ts)）。
 

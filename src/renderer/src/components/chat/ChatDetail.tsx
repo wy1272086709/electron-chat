@@ -22,8 +22,10 @@ interface Chat {
   time: string
   unread?: number
   isOnline?: boolean
+  lastSeenAt?: string
   type: 'chat' | 'group'
   memberCount?: number
+  onlineCount?: number
   /** 私聊对方的用户 ID；发送私聊消息时作为 receiverId（群聊为 undefined） */
   peerUserId?: string
 }
@@ -31,6 +33,21 @@ interface Chat {
 // 直接复用 LayoutMessage：消息来自 LayoutContext，已含 chatId / 媒体字段。
 // 保留别名 Message 以减少组件内对消息类型的散落引用。
 type Message = LayoutMessage
+
+const formatLastSeen = (iso?: string): string => {
+  if (!iso) return '离线'
+  const time = new Date(iso).getTime()
+  if (Number.isNaN(time)) return '离线'
+  const diff = Date.now() - time
+  if (diff < 60 * 1000) return '刚刚在线'
+  const minutes = Math.floor(diff / (60 * 1000))
+  if (minutes < 60) return `${minutes}分钟前在线`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}小时前在线`
+  const days = Math.floor(hours / 24)
+  if (days < 7) return `${days}天前在线`
+  return '离线'
+}
 
 interface ChatDetailProps {
   chat: Chat | undefined
@@ -66,7 +83,15 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
   const imageInputRef = useRef<HTMLInputElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const isGroup = chat?.type === 'group'
-  const headerStatus = isGroup ? `${chat.memberCount ?? 0} 名成员` : '在线'
+  const isPeerOnline = !isGroup && !!chat?.isOnline
+  const groupMemberCount = chat?.memberCount ?? 0
+  const headerStatus = isGroup
+    ? typeof chat?.onlineCount === 'number'
+      ? `${chat.onlineCount} 人在线 / ${groupMemberCount} 名成员`
+      : `${groupMemberCount} 名成员`
+    : isPeerOnline
+      ? '在线'
+      : formatLastSeen(chat?.lastSeenAt)
 
   // 单条消息右键菜单：记录触发位置与目标消息
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; message: Message } | null>(
@@ -398,14 +423,14 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
             ) : (
               <img src={chat.avatar || FriendAvatar} alt={chat.name} />
             )}
-            {!isGroup && <div className="chat-header-online-dot" />}
+            {isPeerOnline && <div className="chat-header-online-dot" />}
           </div>
           <div className="chat-header-text">
             <div className="chat-header-name">
               {chat.name}
               {isGroup && chat.memberCount ? ` (${chat.memberCount})` : ''}
             </div>
-            <div className={`chat-status ${!isGroup ? 'is-online' : ''}`}>{headerStatus}</div>
+            <div className={`chat-status ${isPeerOnline ? 'is-online' : ''}`}>{headerStatus}</div>
           </div>
         </div>
 

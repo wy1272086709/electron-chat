@@ -87,9 +87,10 @@
 负责通知业务：
 
 - `notifications`
+- `pendingNotificationCount`
 - `markNotificationAsRead`
-- `markAllNotificationsAsRead`
 - `handleFriendRequest`
+- `handleGroupInvitation`
 
 这样通知页不再需要订阅聊天消息、选中会话、收藏列表等状态。
 

@@ -16,8 +16,10 @@ interface Chat {
   time: string
   unread?: number
   isOnline?: boolean
+  lastSeenAt?: string
   type: 'chat' | 'group'
   memberCount?: number
+  onlineCount?: number
 }
 
 interface ChatListProps {

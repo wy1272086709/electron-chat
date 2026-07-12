@@ -8,8 +8,10 @@ export interface LayoutChat {
   time: string
   unread?: number
   isOnline?: boolean
+  lastSeenAt?: string
   type: 'chat' | 'group'
   memberCount?: number
+  onlineCount?: number
   peerUserId?: string
 }
 

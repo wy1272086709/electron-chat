@@ -107,6 +107,13 @@ export interface ChatUserBrief {
   username: string
   nickname?: string | null
   avatarUrl?: string | null
+  /** 在线状态：由后端 presence/Redis 聚合后返回 */
+  isOnline?: boolean | null
+  online?: boolean | null
+  /** 最后在线时间：通常来自数据库 lastSeenAt */
+  lastSeenAt?: string | null
+  lastOnlineAt?: string | null
+  lastActiveAt?: string | null
 }
 
 // 会话列表中的成员引用（含对方资料）
@@ -117,6 +124,11 @@ export interface RoomMemberRef {
   status?: string
   joinedAt?: string
   lastReadAt?: string | null
+  isOnline?: boolean | null
+  online?: boolean | null
+  lastSeenAt?: string | null
+  lastOnlineAt?: string | null
+  lastActiveAt?: string | null
 }
 
 // 会话列表项（GET /chat/rooms）
@@ -126,6 +138,9 @@ export interface Conversation {
     name: string
     topic?: string | null // 'GROUP' | 'PRIVATE'，用于区分群/私聊
     members?: RoomMemberRef[]
+    /** 群聊在线人数：由后端从 Redis presence 聚合后返回 */
+    onlineCount?: number | null
+    memberCount?: number | null
   }
   role?: 'OWNER' | 'MEMBER'
   lastReadAt?: string | null

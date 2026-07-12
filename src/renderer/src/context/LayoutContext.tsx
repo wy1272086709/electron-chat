@@ -177,6 +177,69 @@ function isActionableNotification(notification: AppNotification): boolean {
   return Number.isNaN(createdAt) || Date.now() - createdAt < NOTIFICATION_EXPIRE_MS
 }
 
+type PresencePayload =
+  | string
+  | {
+      userId?: string
+      id?: string
+      isOnline?: boolean
+      online?: boolean
+      status?: string
+      lastSeenAt?: string
+      lastOnlineAt?: string
+      lastActiveAt?: string
+    }
+
+type RoomPresencePayload = {
+  roomId?: string
+  id?: string
+  onlineCount?: number
+  onlineMemberCount?: number
+  memberCount?: number
+}
+
+function normalizePresencePayload(
+  payload: PresencePayload,
+  forcedOnline?: boolean
+): { userId: string; isOnline: boolean; lastSeenAt?: string } | null {
+  if (typeof payload === 'string') {
+    if (!payload || forcedOnline === undefined) return null
+    return {
+      userId: payload,
+      isOnline: forcedOnline,
+      lastSeenAt: forcedOnline ? undefined : new Date().toISOString()
+    }
+  }
+
+  if (!payload || typeof payload !== 'object') return null
+
+  const userId = payload.userId || payload.id
+  if (!userId) return null
+
+  const status = payload.status?.toLowerCase()
+  const isOnline =
+    forcedOnline ??
+    (typeof payload.isOnline === 'boolean'
+      ? payload.isOnline
+      : typeof payload.online === 'boolean'
+        ? payload.online
+        : status === 'online'
+          ? true
+          : status === 'offline'
+            ? false
+            : undefined)
+
+  if (isOnline === undefined) return null
+
+  const lastSeenAt =
+    payload.lastSeenAt ||
+    payload.lastOnlineAt ||
+    payload.lastActiveAt ||
+    (!isOnline ? new Date().toISOString() : undefined)
+
+  return { userId, isOnline, lastSeenAt }
+}
+
 const LayoutContext = createContext<LayoutContextValue | null>(null)
 const NavigationContext = createContext<NavigationContextValue | null>(null)
 const ChatContext = createContext<ChatContextValue | null>(null)
@@ -414,6 +477,43 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     } else {
       console.warn('[Layout] 加载通知列表失败:', res.message)
     }
+  }, [])
+
+  const applyPresenceUpdate = useCallback(
+    (payload: PresencePayload, forcedOnline?: boolean): void => {
+      const presence = normalizePresencePayload(payload, forcedOnline)
+      if (!presence) return
+
+      setChats((prev) =>
+        prev.map((chat) => {
+          if (chat.type !== 'chat' || chat.peerUserId !== presence.userId) return chat
+          return {
+            ...chat,
+            isOnline: presence.isOnline,
+            lastSeenAt: presence.lastSeenAt ?? chat.lastSeenAt
+          }
+        })
+      )
+    },
+    []
+  )
+
+  const applyRoomPresenceUpdate = useCallback((payload: RoomPresencePayload): void => {
+    const roomId = payload.roomId || payload.id
+    const onlineCount = payload.onlineCount ?? payload.onlineMemberCount
+    if (!roomId || typeof onlineCount !== 'number') return
+
+    setChats((prev) =>
+      prev.map((chat) => {
+        if (chat.type !== 'group' || chat.id !== roomId) return chat
+        return {
+          ...chat,
+          onlineCount,
+          memberCount:
+            typeof payload.memberCount === 'number' ? payload.memberCount : chat.memberCount
+        }
+      })
+    )
   }, [])
 
   const scheduleConversationRefresh = useCallback(
@@ -841,6 +941,27 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       socket.on('chat:error', (e: { message?: string }) => {
         console.error('[Socket] chat:error:', e?.message)
       })
+      socket.on('presence:update', (payload: PresencePayload) => {
+        applyPresenceUpdate(payload)
+      })
+      socket.on('user:online', (payload: PresencePayload) => {
+        applyPresenceUpdate(payload, true)
+      })
+      socket.on('user:offline', (payload: PresencePayload) => {
+        applyPresenceUpdate(payload, false)
+      })
+      socket.on('presence:online', (payload: PresencePayload) => {
+        applyPresenceUpdate(payload, true)
+      })
+      socket.on('presence:offline', (payload: PresencePayload) => {
+        applyPresenceUpdate(payload, false)
+      })
+      socket.on('room:presence', (payload: RoomPresencePayload) => {
+        applyRoomPresenceUpdate(payload)
+      })
+      socket.on('room:onlineCount', (payload: RoomPresencePayload) => {
+        applyRoomPresenceUpdate(payload)
+      })
 
       const refreshConversations = (): void => {
         scheduleConversationRefresh(meId)
@@ -913,6 +1034,8 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, [
     currentUserId,
     loadConversations,
+    applyPresenceUpdate,
+    applyRoomPresenceUpdate,
     scheduleConversationRefresh,
     scheduleNotificationRefresh,
     schedulePendingFlush,
@@ -929,15 +1052,6 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       )
     } else {
       console.warn('[Layout] 标记通知已读失败:', res.message)
-    }
-  }, [])
-
-  const markAllNotificationsAsRead = useCallback(async (): Promise<void> => {
-    const res = await notificationService.markAllRead()
-    if (res.result) {
-      setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })))
-    } else {
-      console.warn('[Layout] 标记全部已读失败:', res.message)
     }
   }, [])
 
@@ -1501,7 +1615,6 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       notifications,
       pendingNotificationCount,
       markNotificationAsRead,
-      markAllNotificationsAsRead,
       handleFriendRequest,
       handleGroupInvitation
     }),
@@ -1509,7 +1622,6 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       notifications,
       pendingNotificationCount,
       markNotificationAsRead,
-      markAllNotificationsAsRead,
       handleFriendRequest,
       handleGroupInvitation
     ]

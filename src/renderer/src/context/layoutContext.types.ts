@@ -7,6 +7,8 @@ export interface StartChatFriendSnapshot {
   name?: string
   username?: string
   avatar?: string
+  isOnline?: boolean
+  lastSeenAt?: string
 }
 
 export interface NavigationContextValue {
@@ -45,7 +47,6 @@ export interface NotificationsContextValue {
   notifications: AppNotification[]
   pendingNotificationCount: number
   markNotificationAsRead: (id: string) => Promise<void>
-  markAllNotificationsAsRead: () => Promise<void>
   handleFriendRequest: (id: string, action: NotificationAction) => Promise<void>
   handleGroupInvitation: (id: string, action: NotificationAction) => Promise<void>
 }
