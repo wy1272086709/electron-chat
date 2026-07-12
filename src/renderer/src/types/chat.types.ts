@@ -95,7 +95,7 @@ export type ChatEventType =
 export interface ChatEvent {
   type: ChatEventType
   chatId: string
-  data: any
+  data: unknown
   timestamp: number
 }
 
@@ -159,6 +159,7 @@ export interface ChatMessage {
   id: string
   roomId: string
   senderId: string
+  clientMessageId?: string | null
   content?: string
   messageType?: string
   fileUrl?: string | null
@@ -174,12 +175,35 @@ export interface ChatMessage {
   sender?: ChatUserBrief
 }
 
+export interface ChatMessageSyncCursor {
+  messageId: string
+  createdAt: string
+}
+
+export interface ChatMessageSyncResult {
+  messages: ChatMessage[]
+  nextCursor?: ChatMessageSyncCursor | null
+  hasMore: boolean
+}
+
 // 清空状态（POST /chat/rooms/:roomId/clear）
 export interface ChatClearState {
   id: string
   roomId: string
   userId: string
   clearedAt: string
+}
+
+// 退出群聊结果（POST /chat/rooms/:roomId/leave）
+export interface LeaveRoomResult {
+  roomId: string
+  userId: string
+  /** 最后一名成员退出时为 true（房间已归档，等价于解散） */
+  disbanded: boolean
+  /** 群主退出时转让的新群主 ID；非群主退出或解散时为 null */
+  newOwnerId?: string | null
+  /** 退出后剩余的成员 ID（用于实时通知） */
+  remainingMemberIds: string[]
 }
 
 // 创建群聊 / 私聊房间返回结构

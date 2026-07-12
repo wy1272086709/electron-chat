@@ -10,12 +10,12 @@ import React, {
 import { useNavigate } from 'react-router-dom'
 import { io, type Socket } from 'socket.io-client'
 import { API_CONFIG } from '@renderer/config/api.config'
-import FavoriteImageSample from '@renderer/assets/favorite-image-sample.svg'
 import { chatService } from '@renderer/services/chat.service'
 import { notificationService } from '@renderer/services/notification.service'
 import { secureStorageService } from '@renderer/services/secure-storage.service'
+import { userService } from '@renderer/services/user.service'
 import type { ChatMessage as ServerMessage } from '@renderer/types/chat.types'
-import type { AppNotification, FriendRequestAction } from '@renderer/types/notification.types'
+import type { AppNotification, NotificationAction } from '@renderer/types/notification.types'
 import type {
   AppPanel,
   Favorite,
@@ -59,6 +59,11 @@ const NOTIFICATION_SOCKET_EVENTS = [
 
 /** 等待服务端 ack 的超时时间（ms）；超时未回执则把消息标记为 failed，提示用户重发 */
 const SEND_ACK_TIMEOUT_MS = 8000
+const SEND_RETRY_DELAY_MS = 1200
+const SEND_MAX_RETRY_COUNT = 3
+const SYNC_PAGE_SIZE = 100
+const RELIABLE_STATE_KEY_PREFIX = 'reliable_chat_state_v1'
+const NOTIFICATION_EXPIRE_MS = 7 * 24 * 60 * 60 * 1000
 
 /** socket.emit 回执（ack）的载荷形态，对齐后端 DataResult */
 type SendAckResponse = { result?: boolean; data?: unknown; message?: string }
@@ -76,6 +81,23 @@ interface SendPayload {
   thumbnailUrl?: string
 }
 
+type PendingMessageStatus = 'pending' | 'sending' | 'failed'
+
+interface PendingReliableMessage extends SendPayload {
+  localId: string
+  clientMessageId: string
+  chatId: string
+  receiverId?: string
+  status: PendingMessageStatus
+  retryCount: number
+  createdAt: string
+}
+
+interface ReliableChatLocalState {
+  pendingMessages: PendingReliableMessage[]
+  roomCursors: Record<string, string>
+}
+
 /** 把附件元数据转成发送载荷（重发已上传完成的媒体消息时复用） */
 function mediaPayloadFromAttachment(att: MessageAttachment, content?: string): SendPayload {
   return {
@@ -89,6 +111,70 @@ function mediaPayloadFromAttachment(att: MessageAttachment, content?: string): S
     mediaHeight: att.mediaHeight,
     thumbnailUrl: att.thumbnailUrl
   }
+}
+
+function createClientMessageId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return `cmid-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+function getReliableStateKey(userId: string | null): string {
+  return `${RELIABLE_STATE_KEY_PREFIX}:${userId || 'anonymous'}`
+}
+
+function pendingToLayoutMessage(item: PendingReliableMessage): LayoutMessage {
+  const messageType = item.messageType || 'TEXT'
+  const isMedia = messageType === 'IMAGE' || messageType === 'FILE'
+  return {
+    id: item.localId,
+    clientMessageId: item.clientMessageId,
+    chatId: item.chatId,
+    content: item.content || '',
+    createdAt: item.createdAt,
+    time: formatHM(item.createdAt),
+    sender: 'me',
+    senderName: '我',
+    status: item.status === 'failed' ? 'failed' : item.status,
+    messageType,
+    attachment: isMedia
+      ? {
+          messageType,
+          objectName: item.fileUrl,
+          fileName: item.fileName || '',
+          fileSize: item.fileSize || 0,
+          fileType: item.fileType || '',
+          mediaWidth: item.mediaWidth,
+          mediaHeight: item.mediaHeight,
+          thumbnailUrl: item.thumbnailUrl
+        }
+      : undefined
+  }
+}
+
+function isServerMessage(value: unknown): value is ServerMessage {
+  return !!(
+    value &&
+    typeof value === 'object' &&
+    typeof (value as ServerMessage).id === 'string' &&
+    typeof (value as ServerMessage).roomId === 'string'
+  )
+}
+
+function extractServerMessage(value: unknown): ServerMessage | null {
+  if (isServerMessage(value)) return value
+  if (value && typeof value === 'object') {
+    const maybeMessage = (value as { message?: unknown }).message
+    if (isServerMessage(maybeMessage)) return maybeMessage
+  }
+  return null
+}
+
+function isActionableNotification(notification: AppNotification): boolean {
+  if (notification.result !== 'PENDING') return false
+  const createdAt = new Date(notification.createdAt).getTime()
+  return Number.isNaN(createdAt) || Date.now() - createdAt < NOTIFICATION_EXPIRE_MS
 }
 
 const LayoutContext = createContext<LayoutContextValue | null>(null)
@@ -109,69 +195,23 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [chats, setChats] = useState<LayoutChat[]>([])
   const [messages, setMessages] = useState<LayoutMessage[]>([])
   const [notifications, setNotifications] = useState<AppNotification[]>([])
-  const [favorites] = useState<Favorite[]>([
-    {
-      id: '1',
-      type: 'text',
-      title: '有没有女生聊 老师刚吃饭完有劲 带你聊一波 让妹子对你回味无穷',
-      source: '欧阳校长-白哥 60B',
-      time: '2026-07-05',
-      chatId: '2'
-    },
-    {
-      id: '2',
-      type: 'text',
-      title: 'Token消耗完了',
-      source: 'WLB 社群',
-      time: '2026-07-05',
-      chatId: '3'
-    },
-    {
-      id: '3',
-      type: 'image',
-      title: '[KY科学择偶] 交友实践 02群',
-      source: '[KY科学择偶] 交友实践 02群',
-      thumbnail: FavoriteImageSample,
-      time: '2026-05-04',
-      chatId: '4'
-    },
-    {
-      id: '4',
-      type: 'file',
-      title: '第1-11周课件.zip',
-      fileName: '第1-11周课件.zip',
-      fileExt: 'ZIP',
-      fileSize: '32.3 MB',
-      source: '群聊',
-      time: '2022-02-21'
-    },
-    {
-      id: '5',
-      type: 'file',
-      title: '教师国考介绍 (1).pptx',
-      fileName: '教师国考介绍 (1).pptx',
-      fileExt: 'PPTX',
-      fileSize: '12.4 MB',
-      source: '群聊',
-      time: '2017-05-03'
-    },
-    {
-      id: '6',
-      type: 'file',
-      title: '华夏思源休学延学指南 2017.docx',
-      fileName: '华夏思源休学延学指南 2017.docx',
-      fileExt: 'DOCX',
-      fileSize: '948 KB',
-      source: '流水无痕',
-      time: '2017-03-19'
-    }
-  ])
-
+  const [favorites] = useState<Favorite[]>([])
   const selectedChatRef = useRef<string | null>(selectedChat)
+  const lastSelectedChatByPanelRef = useRef<Partial<Record<'chat' | 'groups', string | null>>>({})
   const activePanelRef = useRef<AppPanel>(activePanel)
   const currentUserIdRef = useRef<string | null>(currentUserId)
   const chatsRef = useRef<LayoutChat[]>(chats)
   const messagesRef = useRef<LayoutMessage[]>(messages)
+  const socketRef = useRef<Socket | null>(socket)
+  const pendingQueueRef = useRef<PendingReliableMessage[]>([])
+  const roomCursorsRef = useRef<Record<string, string>>({})
+  const seenMessageIdsRef = useRef<Set<string>>(new Set())
+  const seenClientMessageIdsRef = useRef<Set<string>>(new Set())
+  const reliableStateKeyRef = useRef<string>(getReliableStateKey(null))
+  const flushingPendingRef = useRef(false)
+  const pendingFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const syncInFlightRoomsRef = useRef<Set<string>>(new Set())
+  const flushPendingQueueRef = useRef<() => Promise<void>>(async () => undefined)
   // 媒体重发时需要原始 File（LayoutMessage 不存二进制）：localId → File，发送成功/卸载时清理
   const pendingFilesRef = useRef<Map<string, File>>(new Map())
   const conversationRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -197,31 +237,172 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     messagesRef.current = messages
   }, [messages])
 
-  const loadConversations = useCallback(async (meId: string | null): Promise<void> => {
+  useEffect(() => {
+    socketRef.current = socket
+  }, [socket])
+
+  const persistReliableState = useCallback(async (): Promise<void> => {
+    const snapshot: ReliableChatLocalState = {
+      pendingMessages: pendingQueueRef.current,
+      roomCursors: roomCursorsRef.current
+    }
+    try {
+      await secureStorageService.setJSON(reliableStateKeyRef.current, snapshot)
+    } catch (error) {
+      console.warn('[ReliableMessage] 本地状态持久化失败:', error)
+    }
+  }, [])
+
+  const markSeenServerMessage = useCallback((message: ServerMessage): void => {
+    seenMessageIdsRef.current.add(message.id)
+    if (message.clientMessageId) {
+      seenClientMessageIdsRef.current.add(message.clientMessageId)
+    }
+  }, [])
+
+  const setRoomCursor = useCallback(
+    (roomId: string, messageId?: string | null): void => {
+      if (!roomId || !messageId) return
+      if (roomCursorsRef.current[roomId] === messageId) return
+      roomCursorsRef.current = {
+        ...roomCursorsRef.current,
+        [roomId]: messageId
+      }
+      void persistReliableState()
+    },
+    [persistReliableState]
+  )
+
+  const removePendingByClientMessageId = useCallback(
+    (clientMessageId?: string | null): void => {
+      if (!clientMessageId) return
+      const target = pendingQueueRef.current.find(
+        (item) => item.clientMessageId === clientMessageId
+      )
+      if (!target) return
+
+      pendingQueueRef.current = pendingQueueRef.current.filter(
+        (item) => item.clientMessageId !== clientMessageId
+      )
+      pendingFilesRef.current.delete(target.localId)
+      void persistReliableState()
+    },
+    [persistReliableState]
+  )
+
+  const upsertPendingMessage = useCallback(
+    (item: PendingReliableMessage): void => {
+      const next = pendingQueueRef.current.filter(
+        (pending) => pending.clientMessageId !== item.clientMessageId
+      )
+      pendingQueueRef.current = [...next, item]
+      void persistReliableState()
+    },
+    [persistReliableState]
+  )
+
+  const updatePendingMessage = useCallback(
+    (
+      clientMessageId: string,
+      patch:
+        | Partial<PendingReliableMessage>
+        | ((item: PendingReliableMessage) => Partial<PendingReliableMessage>)
+    ): PendingReliableMessage | null => {
+      let updated: PendingReliableMessage | null = null
+      pendingQueueRef.current = pendingQueueRef.current.map((item) => {
+        if (item.clientMessageId !== clientMessageId) return item
+        const nextPatch = typeof patch === 'function' ? patch(item) : patch
+        updated = { ...item, ...nextPatch }
+        return updated
+      })
+      if (updated) void persistReliableState()
+      return updated
+    },
+    [persistReliableState]
+  )
+
+  const setLocalMessageStatusByClientId = useCallback(
+    (
+      clientMessageId: string,
+      status: MessageDeliveryStatus,
+      errorMessage?: string,
+      localId?: string
+    ): void => {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.clientMessageId === clientMessageId || (!!localId && m.id === localId)
+            ? { ...m, status, errorMessage: status === 'failed' ? errorMessage : undefined }
+            : m
+        )
+      )
+    },
+    []
+  )
+
+  const markMessageDelivered = useCallback((message: ServerMessage, meId: string | null): void => {
+    if (!message.id || !message.roomId || message.senderId === meId) return
+    socketRef.current?.emit('message:delivered', {
+      roomId: message.roomId,
+      messageId: message.id
+    })
+  }, [])
+
+  const rememberSelectedChat = useCallback((chatId: string): void => {
+    const chat = chatsRef.current.find((item) => item.id === chatId)
+    if (!chat) return
+    lastSelectedChatByPanelRef.current[chat.type === 'group' ? 'groups' : 'chat'] = chatId
+  }, [])
+
+  const forgetSelectedChat = useCallback((chatId: string): void => {
+    ;(['chat', 'groups'] as const).forEach((panel) => {
+      if (lastSelectedChatByPanelRef.current[panel] === chatId) {
+        lastSelectedChatByPanelRef.current[panel] = null
+      }
+    })
+  }, [])
+
+  const loadConversations = useCallback(async (meId: string | null): Promise<LayoutChat[]> => {
     const res = await chatService.getConversations()
     if (res.result && res.data) {
       const list = await Promise.all(
         res.data.map((c) => resolveChatAvatar(mapConversation(c, meId)))
       )
       setChats((prev) => mergeConversationList(list, prev, selectedChatRef.current))
+      return list
     } else {
       console.warn('[Layout] 加载会话列表失败:', res.message)
+      return []
     }
   }, [])
 
-  const loadMessages = useCallback(async (roomId: string, meId: string | null): Promise<void> => {
-    const res = await chatService.getMessages(roomId, 50)
-    if (res.result && res.data) {
-      const sorted = res.data
-        .filter((m) => !m.isDeleted)
-        .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
-      const list = await Promise.all(sorted.map((m) => mapServerMessage(m, meId)))
-      setMessages(list)
-    } else {
-      setMessages([])
-      console.warn('[Layout] 加载消息失败:', res.message)
-    }
-  }, [])
+  const loadMessages = useCallback(
+    async (roomId: string, meId: string | null): Promise<void> => {
+      const res = await chatService.getMessages(roomId, 50)
+      const pendingList = pendingQueueRef.current
+        .filter((item) => item.chatId === roomId)
+        .map(pendingToLayoutMessage)
+
+      if (res.result && res.data) {
+        const sorted = res.data
+          .filter((m) => !m.isDeleted)
+          .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+        sorted.forEach((m) => {
+          markSeenServerMessage(m)
+          setRoomCursor(m.roomId, m.id)
+        })
+        const list = await Promise.all(sorted.map((m) => mapServerMessage(m, meId)))
+        const serverClientIds = new Set(list.map((m) => m.clientMessageId).filter(Boolean))
+        const visiblePending = pendingList.filter(
+          (m) => !m.clientMessageId || !serverClientIds.has(m.clientMessageId)
+        )
+        setMessages([...list, ...visiblePending])
+      } else {
+        setMessages(pendingList)
+        console.warn('[Layout] 加载消息失败:', res.message)
+      }
+    },
+    [markSeenServerMessage, setRoomCursor]
+  )
 
   const loadNotifications = useCallback(async (): Promise<void> => {
     const res = await notificationService.getNotifications()
@@ -260,6 +441,291 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }, 120)
   }, [loadNotifications])
 
+  const upsertServerMessage = useCallback(
+    async (
+      message: ServerMessage,
+      options: { updateConversation?: boolean; markDelivered?: boolean } = {}
+    ): Promise<void> => {
+      if (!message?.id || !message.roomId || message.isDeleted) return
+      const isDuplicate =
+        seenMessageIdsRef.current.has(message.id) ||
+        (!!message.clientMessageId && seenClientMessageIdsRef.current.has(message.clientMessageId))
+      if (isDuplicate) {
+        removePendingByClientMessageId(message.clientMessageId)
+        setRoomCursor(message.roomId, message.id)
+        return
+      }
+
+      const meId = currentUserIdRef.current
+      const local = await mapServerMessage(message, meId)
+      const isMe = message.senderId === meId
+      const isOpen = selectedChatRef.current === message.roomId
+
+      markSeenServerMessage(message)
+      setRoomCursor(message.roomId, message.id)
+      removePendingByClientMessageId(message.clientMessageId)
+
+      if (options.markDelivered !== false) {
+        markMessageDelivered(message, meId)
+      }
+
+      if (options.updateConversation !== false) {
+        setChats((prev) => {
+          const idx = prev.findIndex((c) => c.id === message.roomId)
+          const senderNick = message.sender?.nickname || message.sender?.username
+          const isGroup = idx > -1 && prev[idx].type === 'group'
+          const preview = buildLastMessagePreview(
+            message.messageType,
+            message.content,
+            message.fileName,
+            isGroup,
+            senderNick
+          )
+          const base: LayoutChat =
+            idx > -1
+              ? prev[idx]
+              : {
+                  id: message.roomId,
+                  name: senderNick || '新会话',
+                  avatar: '',
+                  lastMessage: '',
+                  time: '',
+                  type: 'chat'
+                }
+          const next: LayoutChat = {
+            ...base,
+            avatar: base.avatar || (!isGroup ? local.senderAvatar || '' : ''),
+            lastMessage: preview,
+            time: message.createdAt,
+            unread: isOpen || isMe ? undefined : (base.unread || 0) + 1
+          }
+          return [next, ...prev.filter((c) => c.id !== message.roomId)]
+        })
+      }
+
+      if (isOpen) {
+        setMessages((prev) => {
+          if (prev.some((m) => m.id === local.id)) return prev
+          const cleaned = prev.filter((m) => {
+            const shouldRemove =
+              m.clientMessageId === local.clientMessageId ||
+              (m.id.startsWith('local-') &&
+                m.chatId === local.chatId &&
+                (local.attachment?.objectName
+                  ? m.attachment?.objectName === local.attachment.objectName
+                  : m.content === local.content &&
+                    (m.messageType || 'TEXT') === (local.messageType || 'TEXT')))
+            if (shouldRemove && m.attachment?.localPreviewUrl) {
+              URL.revokeObjectURL(m.attachment.localPreviewUrl)
+            }
+            return !shouldRemove
+          })
+          return [...cleaned, local].sort(
+            (a, b) => new Date(a.createdAt || '').getTime() - new Date(b.createdAt || '').getTime()
+          )
+        })
+
+        if (!isMe) {
+          void chatService
+            .markRoomRead(message.roomId)
+            .then(() => scheduleConversationRefresh(meId))
+        }
+      }
+    },
+    [
+      markMessageDelivered,
+      markSeenServerMessage,
+      removePendingByClientMessageId,
+      scheduleConversationRefresh,
+      setRoomCursor
+    ]
+  )
+
+  const syncRoomMessages = useCallback(
+    async (roomId: string): Promise<void> => {
+      if (!roomId || syncInFlightRoomsRef.current.has(roomId)) return
+      syncInFlightRoomsRef.current.add(roomId)
+
+      try {
+        let afterMessageId: string | undefined = roomCursorsRef.current[roomId]
+        let hasMore = true
+
+        while (hasMore) {
+          const res = await chatService.syncMessages(roomId, afterMessageId, SYNC_PAGE_SIZE)
+          if (!res.result || !res.data) {
+            console.warn('[ReliableMessage] 同步消息失败:', roomId, res.message)
+            break
+          }
+
+          const sorted = [...res.data.messages]
+            .filter((m) => !m.isDeleted)
+            .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+
+          for (const message of sorted) {
+            await upsertServerMessage(message, { updateConversation: true, markDelivered: true })
+          }
+
+          afterMessageId =
+            res.data.nextCursor?.messageId || sorted.at(-1)?.id || afterMessageId || undefined
+          if (afterMessageId) {
+            setRoomCursor(roomId, afterMessageId)
+          }
+          hasMore = res.data.hasMore && sorted.length > 0
+        }
+      } finally {
+        syncInFlightRoomsRef.current.delete(roomId)
+      }
+    },
+    [setRoomCursor, upsertServerMessage]
+  )
+
+  const emitPendingWithAck = useCallback(
+    (item: PendingReliableMessage): Promise<ServerMessage | null> => {
+      const sock = socketRef.current
+      if (!sock?.connected) return Promise.reject(new Error('网络未连接'))
+
+      const chat = chatsRef.current.find((c) => c.id === item.chatId)
+      if (!chat) return Promise.reject(new Error('会话不存在'))
+
+      const basePayload = {
+        clientMessageId: item.clientMessageId,
+        content: item.content || undefined,
+        messageType: item.messageType,
+        fileUrl: item.fileUrl,
+        fileName: item.fileName,
+        fileSize: item.fileSize,
+        fileType: item.fileType,
+        mediaWidth: item.mediaWidth,
+        mediaHeight: item.mediaHeight,
+        thumbnailUrl: item.thumbnailUrl
+      }
+
+      return new Promise((resolve, reject) => {
+        const handleAck = (err: Error | null, ack?: SendAckResponse): void => {
+          if (err) {
+            reject(err)
+            return
+          }
+          if (ack?.result === false) {
+            reject(new Error(ack.message || '消息发送失败'))
+            return
+          }
+          resolve(extractServerMessage(ack?.data))
+        }
+
+        if (chat.type === 'group') {
+          sock
+            .timeout(SEND_ACK_TIMEOUT_MS)
+            .emit('message:sendRoom', { roomId: item.chatId, ...basePayload }, handleAck)
+          return
+        }
+
+        const receiverId = item.receiverId || chat.peerUserId
+        if (!receiverId) {
+          reject(new Error('缺少私聊接收方，无法发送'))
+          return
+        }
+        sock
+          .timeout(SEND_ACK_TIMEOUT_MS)
+          .emit('message:sendPrivate', { receiverId, ...basePayload }, handleAck)
+      })
+    },
+    []
+  )
+
+  const schedulePendingFlush = useCallback((delay = 0): void => {
+    if (pendingFlushTimerRef.current) {
+      clearTimeout(pendingFlushTimerRef.current)
+    }
+    pendingFlushTimerRef.current = setTimeout(() => {
+      pendingFlushTimerRef.current = null
+      void flushPendingQueueRef.current()
+    }, delay)
+  }, [])
+
+  const flushPendingQueue = useCallback(async (): Promise<void> => {
+    if (flushingPendingRef.current) return
+    if (!socketRef.current?.connected) return
+
+    flushingPendingRef.current = true
+    let shouldRetryLater = false
+
+    try {
+      for (const queued of [...pendingQueueRef.current]) {
+        const latest = pendingQueueRef.current.find(
+          (item) => item.clientMessageId === queued.clientMessageId
+        )
+        if (!latest || latest.status === 'failed') continue
+
+        const nextRetryCount = latest.retryCount + 1
+        const sending: PendingReliableMessage = {
+          ...latest,
+          status: 'sending',
+          retryCount: nextRetryCount
+        }
+        updatePendingMessage(latest.clientMessageId, sending)
+        setLocalMessageStatusByClientId(
+          latest.clientMessageId,
+          'sending',
+          undefined,
+          latest.localId
+        )
+
+        try {
+          const serverMessage = await emitPendingWithAck(sending)
+          if (serverMessage) {
+            await upsertServerMessage(serverMessage, {
+              updateConversation: true,
+              markDelivered: true
+            })
+          } else {
+            removePendingByClientMessageId(sending.clientMessageId)
+            pendingFilesRef.current.delete(sending.localId)
+            setLocalMessageStatusByClientId(
+              sending.clientMessageId,
+              'sent',
+              undefined,
+              sending.localId
+            )
+            scheduleConversationRefresh(currentUserIdRef.current)
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : '消息发送失败'
+          const failed = nextRetryCount >= SEND_MAX_RETRY_COUNT
+          updatePendingMessage(sending.clientMessageId, {
+            status: failed ? 'failed' : 'pending',
+            retryCount: nextRetryCount
+          })
+          setLocalMessageStatusByClientId(
+            sending.clientMessageId,
+            failed ? 'failed' : 'pending',
+            failed ? message : undefined,
+            sending.localId
+          )
+          shouldRetryLater = shouldRetryLater || !failed
+        }
+      }
+    } finally {
+      flushingPendingRef.current = false
+    }
+
+    if (shouldRetryLater) {
+      schedulePendingFlush(SEND_RETRY_DELAY_MS)
+    }
+  }, [
+    emitPendingWithAck,
+    removePendingByClientMessageId,
+    scheduleConversationRefresh,
+    schedulePendingFlush,
+    setLocalMessageStatusByClientId,
+    updatePendingMessage,
+    upsertServerMessage
+  ])
+
+  useEffect(() => {
+    flushPendingQueueRef.current = flushPendingQueue
+  }, [flushPendingQueue])
+
   useEffect(() => {
     const pendingFiles = pendingFilesRef.current
     return () => {
@@ -268,6 +734,9 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
       if (notificationRefreshTimerRef.current) {
         clearTimeout(notificationRefreshTimerRef.current)
+      }
+      if (pendingFlushTimerRef.current) {
+        clearTimeout(pendingFlushTimerRef.current)
       }
       // 卸载时回收所有乐观媒体消息的 blob 预览 URL，避免内存泄漏
       messagesRef.current.forEach((m) => {
@@ -283,11 +752,12 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     async (newRoomId?: string): Promise<void> => {
       await loadConversations(currentUserIdRef.current)
       if (newRoomId) {
+        rememberSelectedChat(newRoomId)
         selectedChatRef.current = newRoomId
         setSelectedChat(newRoomId)
       }
     },
-    [loadConversations]
+    [loadConversations, rememberSelectedChat]
   )
 
   useEffect(() => {
@@ -296,13 +766,24 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       const user = await secureStorageService.getUserInfo()
       if (cancelled) return
       const meId = user?.id ?? null
+      reliableStateKeyRef.current = getReliableStateKey(meId)
+      const reliableState = await secureStorageService.getJSON<ReliableChatLocalState>(
+        reliableStateKeyRef.current
+      )
+      if (!cancelled && reliableState) {
+        pendingQueueRef.current = Array.isArray(reliableState.pendingMessages)
+          ? reliableState.pendingMessages
+          : []
+        roomCursorsRef.current = reliableState.roomCursors || {}
+      }
       setCurrentUserId(meId)
       await Promise.all([loadConversations(meId), loadNotifications()])
+      schedulePendingFlush()
     })()
     return () => {
       cancelled = true
     }
-  }, [loadConversations, loadNotifications])
+  }, [loadConversations, loadNotifications, schedulePendingFlush])
 
   useEffect(() => {
     ;(async () => {
@@ -341,20 +822,15 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       })
       setSocket(socket)
 
-      // 首次连接由 selectedChat effect 负责加载历史；这里用闭包标志位区分「重连」，
-      // 仅在重连时为当前打开的会话补拉一次消息，消除断线期间漏掉的消息（步骤 2）。
-      let hasConnectedOnce = false
       socket.on('connect', () => {
         console.log('[Socket] connected:', socket?.id)
-        if (!hasConnectedOnce) {
-          hasConnectedOnce = true
-          return
-        }
-        const openChatId = selectedChatRef.current
-        const panel = activePanelRef.current
-        if (openChatId && (panel === 'chat' || panel === 'groups')) {
-          void loadMessages(openChatId, meId)
-        }
+        void (async () => {
+          const list = await loadConversations(meId)
+          for (const chat of list) {
+            await syncRoomMessages(chat.id)
+          }
+          schedulePendingFlush()
+        })()
       })
       socket.on('disconnect', (reason) => console.log('[Socket] disconnected:', reason))
       socket.on('connect_error', (err) => console.error('[Socket] connect_error:', err.message))
@@ -377,76 +853,39 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         refreshConversations()
       }
 
-      socket.on('message:new', async (msg: ServerMessage) => {
-        if (!msg?.id || !msg.roomId) return
-        const isMe = msg.senderId === meId
-        // 复用 mapServerMessage：一并解析头像 + 映射媒体 messageType/attachment
-        const local = await mapServerMessage(msg, meId)
-        const isOpen = selectedChatRef.current === msg.roomId
-
-        setChats((prev) => {
-          const idx = prev.findIndex((c) => c.id === msg.roomId)
-          const senderNick = msg.sender?.nickname || msg.sender?.username
-          const isGroup = idx > -1 && prev[idx].type === 'group'
-          const preview = buildLastMessagePreview(
-            msg.messageType,
-            msg.content,
-            msg.fileName,
-            isGroup,
-            senderNick
-          )
-          const base: LayoutChat =
-            idx > -1
-              ? prev[idx]
-              : {
-                  id: msg.roomId,
-                  name: senderNick || '新会话',
-                  avatar: '',
-                  lastMessage: '',
-                  time: '',
-                  type: 'chat'
-                }
-          const next: LayoutChat = {
-            ...base,
-            avatar: base.avatar || (!isGroup ? local.senderAvatar || '' : ''),
-            lastMessage: preview,
-            time: msg.createdAt,
-            unread: isOpen || isMe ? undefined : (base.unread || 0) + 1
-          }
-          return [next, ...prev.filter((c) => c.id !== msg.roomId)]
-        })
-
-        if (isOpen) {
-          setMessages((prev) => {
-            if (prev.some((m) => m.id === local.id)) return prev
-            // 去重自身乐观消息：媒体优先按 objectName/fileUrl 精确匹配，避免多张空备注图片互删。
-            const cleaned = prev.filter((m) => {
-              const shouldRemove =
-                m.id.startsWith('local-') &&
-                m.chatId === local.chatId &&
-                (local.attachment?.objectName
-                  ? m.attachment?.objectName === local.attachment.objectName
-                  : m.content === local.content &&
-                    (m.messageType || 'TEXT') === (local.messageType || 'TEXT'))
-              if (shouldRemove && m.attachment?.localPreviewUrl) {
-                URL.revokeObjectURL(m.attachment.localPreviewUrl)
-              }
-              return !shouldRemove
-            })
-            return [...cleaned, local]
-          })
-
-          if (!isMe) {
-            void chatService.markRoomRead(msg.roomId).then(() => scheduleConversationRefresh(meId))
-          }
-        }
+      socket.on('message:new', (msg: ServerMessage) => {
+        void upsertServerMessage(msg, { updateConversation: true, markDelivered: true })
       })
 
-      socket.on('message:sent', refreshConversations)
+      socket.on('message:sent', (payload: unknown) => {
+        const message = extractServerMessage(payload)
+        if (message) {
+          void upsertServerMessage(message, { updateConversation: true, markDelivered: false })
+        }
+        refreshConversations()
+      })
       socket.on('room:created', refreshConversations)
       socket.on('room:private', refreshConversations)
       socket.on('room:read', refreshConversations)
       socket.on('room:cleared', refreshConversations)
+
+      // 其他成员退出群聊：成员数 / 群主可能变更，刷新会话列表与成员资料
+      socket.on('member:left', (payload: { roomId?: string }) => {
+        if (payload?.roomId) refreshConversations()
+      })
+      // 有新成员加入群聊：成员数变更，刷新会话列表
+      socket.on('member:joined', (payload: { roomId?: string }) => {
+        if (payload?.roomId) refreshConversations()
+      })
+      // 自己退出群聊的后端兜底推送：确保本地会话被清理（leaveGroup 已乐观移除，此处为双保险）
+      socket.on('room:left', (payload: { roomId?: string }) => {
+        if (!payload?.roomId) return
+        setChats((prev) => prev.filter((c) => c.id !== payload.roomId))
+        if (selectedChatRef.current === payload.roomId) {
+          selectedChatRef.current = null
+          setSelectedChat(null)
+        }
+      })
 
       NOTIFICATION_SOCKET_EVENTS.forEach((eventName) => {
         socket?.on(eventName, refreshNotificationsAndConversations)
@@ -471,7 +910,15 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       socket?.disconnect()
       setSocket(null)
     }
-  }, [currentUserId, scheduleConversationRefresh, scheduleNotificationRefresh, loadMessages])
+  }, [
+    currentUserId,
+    loadConversations,
+    scheduleConversationRefresh,
+    scheduleNotificationRefresh,
+    schedulePendingFlush,
+    syncRoomMessages,
+    upsertServerMessage
+  ])
 
   const markNotificationAsRead = useCallback(async (id: string): Promise<void> => {
     const res = await notificationService.markRead(id)
@@ -495,7 +942,7 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, [])
 
   const handleFriendRequest = useCallback(
-    async (id: string, action: FriendRequestAction): Promise<void> => {
+    async (id: string, action: NotificationAction): Promise<void> => {
       const res = await notificationService.handleFriendRequest(id, action)
       const updated = res.data
       if (res.result && updated) {
@@ -508,6 +955,25 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
     },
     []
+  )
+
+  const handleGroupInvitation = useCallback(
+    async (id: string, action: NotificationAction): Promise<void> => {
+      const res = await notificationService.handleGroupInvitation(id, action)
+      const updated = res.data
+      if (res.result && updated) {
+        setNotifications((prev) =>
+          prev.map((n) => (n.id === id ? { ...n, ...updated, sender: n.sender } : n))
+        )
+        if (action === 'ACCEPTED') {
+          await loadConversations(currentUserIdRef.current)
+        }
+      } else {
+        console.warn('[Layout] 处理群邀请失败:', res.message)
+        alert(res.message || '处理群邀请失败')
+      }
+    },
+    [loadConversations]
   )
 
   const markChatAsRead = useCallback(async (chatId: string): Promise<void> => {
@@ -534,6 +1000,7 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         if (!target) return prev
         return [...prev.filter((c) => c.id !== chatId), target]
       })
+      rememberSelectedChat(chatId)
       selectedChatRef.current = chatId
       setSelectedChat(chatId)
       setClearedChat(chatId)
@@ -541,16 +1008,73 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       const chat = chatsRef.current.find((c) => c.id === chatId)
       alert(`已清空与 ${chat?.name || ''} 的聊天记录`)
     },
-    [loadMessages]
+    [loadMessages, rememberSelectedChat]
   )
 
-  const deleteChat = useCallback((id: string): void => {
-    setChats((prev) => prev.filter((chat) => chat.id !== id))
-    if (selectedChatRef.current === id) {
-      selectedChatRef.current = null
-      setSelectedChat(null)
-    }
-  }, [])
+  const deleteChat = useCallback(
+    (id: string): void => {
+      setChats((prev) => prev.filter((chat) => chat.id !== id))
+      forgetSelectedChat(id)
+      if (selectedChatRef.current === id) {
+        selectedChatRef.current = null
+        setSelectedChat(null)
+      }
+    },
+    [forgetSelectedChat]
+  )
+
+  // 删除好友：调后端接口，乐观移除该好友的私聊会话并清空选中，再与后端同步。
+  // 返回是否成功，供「好友资料」弹窗决定是否关闭 / 通知调用方刷新通讯录。
+  const removeFriend = useCallback(
+    async (friendId: string): Promise<boolean> => {
+      const res = await userService.deleteFriend(friendId)
+      if (!res.result) {
+        alert(res.message || '删除好友失败')
+        return false
+      }
+
+      // 乐观移除该好友对应的私聊会话（按 peerUserId 匹配）
+      const removed = chatsRef.current.find((c) => c.type === 'chat' && c.peerUserId === friendId)
+      if (removed) {
+        setChats((prev) => prev.filter((c) => c.id !== removed.id))
+        forgetSelectedChat(removed.id)
+        if (selectedChatRef.current === removed.id) {
+          selectedChatRef.current = null
+          setSelectedChat(null)
+        }
+      }
+
+      // 与后端同步：后端已软移除成员关系，刷新后该私聊不会再出现
+      void loadConversations(currentUserIdRef.current)
+      return true
+    },
+    [forgetSelectedChat, loadConversations]
+  )
+
+  // 退出群聊：调后端接口，乐观移除该群会话并清空选中，再与后端同步。
+  // 返回是否成功，供「群资料」弹窗决定是否关闭 / 回到列表。
+  const leaveGroup = useCallback(
+    async (roomId: string): Promise<boolean> => {
+      const res = await chatService.leaveGroup(roomId)
+      if (!res.result) {
+        alert(res.message || '退出群聊失败')
+        return false
+      }
+
+      // 乐观移除该群会话（按 roomId 匹配）
+      setChats((prev) => prev.filter((c) => c.id !== roomId))
+      forgetSelectedChat(roomId)
+      if (selectedChatRef.current === roomId) {
+        selectedChatRef.current = null
+        setSelectedChat(null)
+      }
+
+      // 与后端同步：后端已把当前用户在该群置为 INACTIVE，刷新后该群不会再出现
+      void loadConversations(currentUserIdRef.current)
+      return true
+    },
+    [forgetSelectedChat, loadConversations]
+  )
 
   const setMessageStatus = useCallback(
     (messageId: string, status: MessageDeliveryStatus, errorMessage?: string): void => {
@@ -565,85 +1089,84 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     []
   )
 
-  // 发送消息的底层动作：依据 chatId/peerUserId 选事件，emit 时附带 ack 回调，
-  // 由 socket.io 的 .timeout() 在超时后以 Error 触发回调，从而驱动 sending → sent/failed。
-  // payload 泛化为文本/媒体通用：TEXT 仅 content；IMAGE/FILE 带 fileUrl 等媒体字段。
-  const emitAndWatchAck = useCallback(
-    (chatId: string, payload: SendPayload, localId: string): void => {
-      const sock = socket
-      if (!sock) return
-      const chat = chatsRef.current.find((c) => c.id === chatId)
-      if (!chat) return
-      const isGroup = chat.type === 'group'
-
-      const handleAck = (err: Error | null, ack?: SendAckResponse): void => {
-        // 后端 ack 可能是 DataResult，也可能直接回 message/空值。
-        // 媒体消息已先完成对象存储上传；部分后端不会调用 socket callback，导致 timeout。
-        // 因此媒体只在明确 result:false 时失败，避免成功图片被误标红点。
-        const isMedia = payload.messageType === 'IMAGE' || payload.messageType === 'FILE'
-        const ok = ack?.result !== false && (!err || isMedia)
-        if (ok) {
-          pendingFilesRef.current.delete(localId)
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === localId ? { ...m, status: 'sent', errorMessage: undefined } : m
-            )
-          )
-        } else {
-          setMessageStatus(localId, 'failed', ack?.message || err?.message || '发送失败')
-        }
-      }
-
-      if (isGroup) {
-        sock
-          .timeout(SEND_ACK_TIMEOUT_MS)
-          .emit('message:sendRoom', { roomId: chatId, ...payload }, handleAck)
-      } else {
-        if (!chat.peerUserId) {
-          setMessageStatus(localId, 'failed', '缺少私聊接收方，无法发送')
-          return
-        }
-        sock
-          .timeout(SEND_ACK_TIMEOUT_MS)
-          .emit('message:sendPrivate', { receiverId: chat.peerUserId, ...payload }, handleAck)
-      }
-    },
-    [socket, setMessageStatus]
-  )
-
-  // 乐观上屏 + 等待 ack：先以 status: 'sending' 立即插入本地消息，再发出带回执的 emit
+  // 乐观上屏 + 本地可靠队列：先生成 clientMessageId，断线/ack 丢失后重试复用同一个 ID。
   const sendMessage = useCallback(
     (content: string): void => {
       const trimmed = content.trim()
       const chatId = selectedChatRef.current
-      if (!trimmed || !chatId || !socket) return
+      if (!trimmed || !chatId) return
+      const chat = chatsRef.current.find((c) => c.id === chatId)
+      if (!chat) return
+
       const localId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      const clientMessageId = createClientMessageId()
+      const createdAt = new Date().toISOString()
+      const pending: PendingReliableMessage = {
+        localId,
+        clientMessageId,
+        chatId,
+        receiverId: chat.type === 'chat' ? chat.peerUserId : undefined,
+        content: trimmed,
+        messageType: 'TEXT',
+        status: 'pending',
+        retryCount: 0,
+        createdAt
+      }
       const optimistic: LayoutMessage = {
         id: localId,
+        clientMessageId,
         chatId,
         content: trimmed,
-        time: formatHM(new Date().toISOString()),
+        createdAt,
+        time: formatHM(createdAt),
         sender: 'me',
         senderName: '我',
-        status: 'sending'
+        status: 'pending',
+        messageType: 'TEXT'
       }
       setMessages((prev) => [...prev, optimistic])
-      emitAndWatchAck(chatId, { content: trimmed, messageType: 'TEXT' }, localId)
+      upsertPendingMessage(pending)
+      schedulePendingFlush()
     },
-    [emitAndWatchAck, socket]
+    [schedulePendingFlush, upsertPendingMessage]
   )
 
-  // 媒体上传后续：上传成功后回填 objectName/尺寸，切到 sending 并发出带回执的 emit
+  // 媒体上传后续：上传成功后持久化 fileUrl 到可靠队列，再等待 ack。
   const runAttachmentUpload = useCallback(
-    async (localId: string, chatId: string, file: File, caption?: string): Promise<void> => {
+    async (
+      localId: string,
+      clientMessageId: string,
+      chatId: string,
+      file: File,
+      caption?: string
+    ): Promise<void> => {
       try {
         const prepared = await uploadMedia(file)
+        const chat = chatsRef.current.find((c) => c.id === chatId)
+        const pending: PendingReliableMessage = {
+          localId,
+          clientMessageId,
+          chatId,
+          receiverId: chat?.type === 'chat' ? chat.peerUserId : undefined,
+          messageType: prepared.messageType,
+          content: caption || undefined,
+          fileUrl: prepared.objectName,
+          fileName: prepared.fileName,
+          fileSize: prepared.fileSize,
+          fileType: prepared.fileType,
+          mediaWidth: prepared.mediaWidth,
+          mediaHeight: prepared.mediaHeight,
+          thumbnailUrl: prepared.thumbnailUrl,
+          status: 'pending',
+          retryCount: 0,
+          createdAt: new Date().toISOString()
+        }
         setMessages((prev) =>
           prev.map((m) =>
             m.id === localId && m.attachment
               ? {
                   ...m,
-                  status: 'sending',
+                  status: 'pending',
                   attachment: {
                     ...m.attachment,
                     objectName: prepared.objectName,
@@ -657,27 +1180,14 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
               : m
           )
         )
-        emitAndWatchAck(
-          chatId,
-          {
-            messageType: prepared.messageType,
-            content: caption || undefined,
-            fileUrl: prepared.objectName,
-            fileName: prepared.fileName,
-            fileSize: prepared.fileSize,
-            fileType: prepared.fileType,
-            mediaWidth: prepared.mediaWidth,
-            mediaHeight: prepared.mediaHeight,
-            thumbnailUrl: prepared.thumbnailUrl
-          },
-          localId
-        )
+        upsertPendingMessage(pending)
+        schedulePendingFlush()
       } catch (error) {
         console.error('[Layout] 媒体上传失败:', error)
         setMessageStatus(localId, 'failed', error instanceof Error ? error.message : '媒体上传失败')
       }
     },
-    [emitAndWatchAck, setMessageStatus]
+    [schedulePendingFlush, setMessageStatus, upsertPendingMessage]
   )
 
   // 发送媒体：先以 status: 'uploading' 乐观上屏（图片用 blob: 即时预览），
@@ -685,16 +1195,20 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const sendAttachment = useCallback(
     (file: File, caption?: string): void => {
       const chatId = selectedChatRef.current
-      if (!chatId || !socket) return
+      if (!chatId) return
       const trimmedCaption = caption?.trim()
       const isImage = isImageFile(file.name, file.type)
       const messageType: LayoutMessageType = isImage ? 'IMAGE' : 'FILE'
       const localId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      const clientMessageId = createClientMessageId()
+      const createdAt = new Date().toISOString()
       const optimistic: LayoutMessage = {
         id: localId,
+        clientMessageId,
         chatId,
         content: trimmedCaption || '',
-        time: formatHM(new Date().toISOString()),
+        createdAt,
+        time: formatHM(createdAt),
         sender: 'me',
         senderName: '我',
         status: 'uploading',
@@ -709,9 +1223,9 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
       setMessages((prev) => [...prev, optimistic])
       pendingFilesRef.current.set(localId, file)
-      void runAttachmentUpload(localId, chatId, file, trimmedCaption || undefined)
+      void runAttachmentUpload(localId, clientMessageId, chatId, file, trimmedCaption || undefined)
     },
-    [runAttachmentUpload, socket]
+    [runAttachmentUpload]
   )
 
   // 重发失败消息：按 attachment.objectName 是否存在分流——
@@ -720,16 +1234,24 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const retrySendMessage = useCallback(
     (messageId: string): void => {
       const target = messagesRef.current.find((m) => m.id === messageId)
-      if (!target || target.sender !== 'me' || !socket) return
+      if (!target || target.sender !== 'me') return
+      const clientMessageId = target.clientMessageId || createClientMessageId()
 
       if (target.attachment) {
         if (target.attachment.objectName) {
-          setMessageStatus(messageId, 'sending')
-          emitAndWatchAck(
-            target.chatId,
-            mediaPayloadFromAttachment(target.attachment, target.content),
-            messageId
-          )
+          const chat = chatsRef.current.find((c) => c.id === target.chatId)
+          upsertPendingMessage({
+            localId: target.id,
+            clientMessageId,
+            chatId: target.chatId,
+            receiverId: chat?.type === 'chat' ? chat.peerUserId : undefined,
+            ...mediaPayloadFromAttachment(target.attachment, target.content),
+            status: 'pending',
+            retryCount: 0,
+            createdAt: target.createdAt || new Date().toISOString()
+          })
+          setLocalMessageStatusByClientId(clientMessageId, 'pending', undefined, messageId)
+          schedulePendingFlush()
         } else {
           const file = pendingFilesRef.current.get(messageId)
           if (!file) {
@@ -738,21 +1260,46 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             return
           }
           setMessageStatus(messageId, 'uploading')
-          void runAttachmentUpload(messageId, target.chatId, file, target.content || undefined)
+          void runAttachmentUpload(
+            messageId,
+            clientMessageId,
+            target.chatId,
+            file,
+            target.content || undefined
+          )
         }
       } else {
-        setMessageStatus(messageId, 'sending')
-        emitAndWatchAck(target.chatId, { content: target.content, messageType: 'TEXT' }, messageId)
+        const chat = chatsRef.current.find((c) => c.id === target.chatId)
+        upsertPendingMessage({
+          localId: target.id,
+          clientMessageId,
+          chatId: target.chatId,
+          receiverId: chat?.type === 'chat' ? chat.peerUserId : undefined,
+          content: target.content,
+          messageType: 'TEXT',
+          status: 'pending',
+          retryCount: 0,
+          createdAt: target.createdAt || new Date().toISOString()
+        })
+        setLocalMessageStatusByClientId(clientMessageId, 'pending', undefined, messageId)
+        schedulePendingFlush()
       }
     },
-    [emitAndWatchAck, runAttachmentUpload, setMessageStatus, socket]
+    [
+      runAttachmentUpload,
+      schedulePendingFlush,
+      setLocalMessageStatusByClientId,
+      setMessageStatus,
+      upsertPendingMessage
+    ]
   )
 
   const navigatePanel = useCallback(
     (panel: AppPanel): void => {
-      if (panel !== activePanelRef.current) {
-        selectedChatRef.current = null
-        setSelectedChat(null)
+      if (panel === 'chat' || panel === 'groups') {
+        const restoredChatId = lastSelectedChatByPanelRef.current[panel] ?? null
+        selectedChatRef.current = restoredChatId
+        setSelectedChat(restoredChatId)
       }
       activePanelRef.current = panel
       setActivePanel(panel)
@@ -771,13 +1318,14 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const setActivePanelState = useCallback(
     (panel: AppPanel, options?: { preserveSelectedChatId?: string }): void => {
-      const shouldPreserveSelectedChat =
-        !!options?.preserveSelectedChatId &&
-        selectedChatRef.current === options.preserveSelectedChatId
-
-      if (!shouldPreserveSelectedChat && panel !== activePanelRef.current) {
-        selectedChatRef.current = null
-        setSelectedChat(null)
+      if (panel === 'chat' || panel === 'groups') {
+        const restoredChatId =
+          options?.preserveSelectedChatId ?? lastSelectedChatByPanelRef.current[panel] ?? null
+        if (options?.preserveSelectedChatId) {
+          lastSelectedChatByPanelRef.current[panel] = options.preserveSelectedChatId
+        }
+        selectedChatRef.current = restoredChatId
+        setSelectedChat(restoredChatId)
       }
       activePanelRef.current = panel
       setActivePanel(panel)
@@ -808,6 +1356,7 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           if (prev.some((chat) => chat.id === roomId)) return prev
           return [fallbackChat, ...prev]
         })
+        lastSelectedChatByPanelRef.current.chat = roomId
         selectedChatRef.current = roomId
         setSelectedChat(roomId)
         if (window.innerWidth <= 768) {
@@ -825,6 +1374,12 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const handleChatSelect = useCallback(
     (chatId: string): void => {
+      const panel = activePanelRef.current
+      if (panel === 'chat' || panel === 'groups') {
+        lastSelectedChatByPanelRef.current[panel] = chatId
+      }
+      rememberSelectedChat(chatId)
+      selectedChatRef.current = chatId
       setSelectedChat(chatId)
       void markChatAsRead(chatId)
       if (window.innerWidth <= 768) {
@@ -832,7 +1387,7 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         setMobileDetailOpen(true)
       }
     },
-    [markChatAsRead]
+    [markChatAsRead, rememberSelectedChat]
   )
 
   const handleBackToList = useCallback((): void => {
@@ -869,6 +1424,10 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const unreadCount = useMemo(
     () => chats.reduce((total, chat) => total + (chat.unread || 0), 0),
     [chats]
+  )
+  const pendingNotificationCount = useMemo(
+    () => notifications.filter(isActionableNotification).length,
+    [notifications]
   )
 
   const navigationValue = useMemo<NavigationContextValue>(
@@ -909,7 +1468,9 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       sendMessage,
       sendAttachment,
       retrySendMessage,
-      startChatWithFriend
+      startChatWithFriend,
+      removeFriend,
+      leaveGroup
     }),
     [
       currentUserId,
@@ -929,18 +1490,29 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       sendMessage,
       sendAttachment,
       retrySendMessage,
-      startChatWithFriend
+      startChatWithFriend,
+      removeFriend,
+      leaveGroup
     ]
   )
 
   const notificationsValue = useMemo<NotificationsContextValue>(
     () => ({
       notifications,
+      pendingNotificationCount,
       markNotificationAsRead,
       markAllNotificationsAsRead,
-      handleFriendRequest
+      handleFriendRequest,
+      handleGroupInvitation
     }),
-    [notifications, markNotificationAsRead, markAllNotificationsAsRead, handleFriendRequest]
+    [
+      notifications,
+      pendingNotificationCount,
+      markNotificationAsRead,
+      markAllNotificationsAsRead,
+      handleFriendRequest,
+      handleGroupInvitation
+    ]
   )
 
   const favoritesValue = useMemo<FavoritesContextValue>(

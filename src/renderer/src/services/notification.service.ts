@@ -7,7 +7,7 @@
  */
 
 import { request, type ElectronResponse } from './request'
-import type { AppNotification, FriendRequestAction } from '../types/notification.types'
+import type { AppNotification, NotificationAction } from '../types/notification.types'
 
 /** markAllRead 返回的是 Prisma updateMany 结果 */
 export interface MarkAllReadResult {
@@ -41,9 +41,20 @@ export const notificationService = {
   /** 处理好友申请（同意 / 拒绝）POST /notifications/handleFriendRequest */
   async handleFriendRequest(
     notificationId: string,
-    action: FriendRequestAction
+    action: NotificationAction
   ): Promise<ElectronResponse<AppNotification>> {
     return request.post<AppNotification>('/notifications/handleFriendRequest', {
+      notificationId,
+      action
+    })
+  },
+
+  /** 处理群聊邀请（同意 / 拒绝）POST /notifications/handleGroupInvitation */
+  async handleGroupInvitation(
+    notificationId: string,
+    action: NotificationAction
+  ): Promise<ElectronResponse<AppNotification>> {
+    return request.post<AppNotification>('/notifications/handleGroupInvitation', {
       notificationId,
       action
     })

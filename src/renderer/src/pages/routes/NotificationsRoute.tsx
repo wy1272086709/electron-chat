@@ -4,7 +4,7 @@ import { useNavigationContext, useNotificationsContext } from '@renderer/context
 
 const NotificationsRoute: React.FC = () => {
   const { activePanel, setActivePanelState } = useNavigationContext()
-  const { notifications, markNotificationAsRead, markAllNotificationsAsRead, handleFriendRequest } =
+  const { notifications, markNotificationAsRead, handleFriendRequest, handleGroupInvitation } =
     useNotificationsContext()
 
   useEffect(() => {
@@ -18,8 +18,8 @@ const NotificationsRoute: React.FC = () => {
       <Notifications
         notifications={notifications}
         onMarkRead={markNotificationAsRead}
-        onMarkAllRead={markAllNotificationsAsRead}
         onHandleFriendRequest={handleFriendRequest}
+        onHandleGroupInvitation={handleGroupInvitation}
       />
     </div>
   )

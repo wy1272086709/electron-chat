@@ -86,6 +86,16 @@ export const userService = {
   },
 
   /**
+   * 删除好友 POST /users/deleteFriend
+   * 后端会同时软移除该私聊成员关系，使该私聊从会话列表消失。
+   * @param friendId 要删除的好友用户 ID
+   * @returns Promise<ElectronResponse<null>>
+   */
+  async deleteFriend(friendId: string): Promise<ElectronResponse<null>> {
+    return request.post<null>('/users/deleteFriend', { friendId })
+  },
+
+  /**
    * 获取好友列表 GET /users/friends
    * @returns Promise<ElectronResponse<UserInfo[]>>
    */

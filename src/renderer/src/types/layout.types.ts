@@ -22,11 +22,12 @@ export type LayoutMessageType = 'TEXT' | 'IMAGE' | 'FILE'
 /**
  * 本地消息投递状态：仅对「我」发出的消息有意义。
  * - uploading：媒体正在上传到对象存储（主进程 PUT 阶段）
+ * - pending：已进入本地可靠发送队列，等待 socket 可用或下一次重试
  * - sending：已乐观上屏，等待服务端 ack（文本 / 已上传完成的媒体）
  * - sent：收到 message:sent 回执 / ack 成功
  * - failed：上传失败 / ack 超时或失败，可点击重发
  */
-export type MessageDeliveryStatus = 'uploading' | 'sending' | 'sent' | 'failed'
+export type MessageDeliveryStatus = 'pending' | 'uploading' | 'sending' | 'sent' | 'failed'
 
 /**
  * 媒体附件：图片 / 文件消息的元数据。
@@ -48,8 +49,12 @@ export interface MessageAttachment {
 
 export interface LayoutMessage {
   id: string
+  /** 前端生成的幂等 ID；重试必须复用，避免后端重复落库 */
+  clientMessageId?: string
   chatId: string
   content: string
+  /** 服务端原始创建时间；本地 pending 消息使用本地创建时间 */
+  createdAt?: string
   time: string
   sender: 'me' | 'other'
   senderName?: string

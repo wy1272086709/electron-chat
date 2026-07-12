@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import FriendAvatar from '@renderer/assets/friend_avatar.svg'
 import { userService } from '@renderer/services/user.service'
 import type { UserInfo } from '@renderer/types/api.types'
+import { resolveAvatarUrl } from '@renderer/utils/avatar-url'
 
 interface AddFriendModalProps {
   onClose: () => void
@@ -15,11 +16,11 @@ interface SearchUser {
   avatar: string
 }
 
-const mapUser = (user: UserInfo): SearchUser => ({
+const mapUser = async (user: UserInfo): Promise<SearchUser> => ({
   id: user.id,
   name: user.nickname || user.username,
   username: user.username,
-  avatar: user.avatar || user.avatarUrl || ''
+  avatar: await resolveAvatarUrl(user.avatar || user.avatarUrl)
 })
 
 const AddFriendModal: React.FC<AddFriendModalProps> = ({ onClose, onAdded }) => {
@@ -46,7 +47,9 @@ const AddFriendModal: React.FC<AddFriendModalProps> = ({ onClose, onAdded }) => 
       if (cancelled) return
       console.log('res->searchFriends:', res)
       if (res.result && res.data) {
-        setUsers(res.data.map(mapUser))
+        const list = await Promise.all(res.data.map(mapUser))
+        if (cancelled) return
+        setUsers(list)
       } else {
         setUsers([])
         setError(res.message || '搜索失败')
@@ -127,9 +130,7 @@ const AddFriendModal: React.FC<AddFriendModalProps> = ({ onClose, onAdded }) => 
                   src={user.avatar || FriendAvatar}
                   alt={user.name}
                   onError={(e) => {
-                    e.currentTarget.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(
-                      user.name
-                    )}&background=6366f1&color=fff&size=48`
+                    e.currentTarget.src = FriendAvatar
                   }}
                 />
                 <span>

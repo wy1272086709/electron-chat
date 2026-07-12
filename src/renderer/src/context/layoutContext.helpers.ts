@@ -195,8 +195,10 @@ export const mapServerMessage = async (
 
   return {
     id: m.id,
+    clientMessageId: m.clientMessageId || undefined,
     chatId: m.roomId,
     content: legacyFileName || legacyImageName ? '' : m.content || '',
+    createdAt: m.createdAt,
     time: formatHM(m.createdAt),
     sender: m.senderId === meId ? 'me' : 'other',
     senderName: m.sender?.nickname || m.sender?.username || '群成员',

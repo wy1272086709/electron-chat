@@ -11,6 +11,8 @@ import type { LayoutMessage } from '@renderer/types/layout.types'
 import { resolveMediaUrl } from '@renderer/utils/media-url'
 import { isImageFile } from '@renderer/utils/file-meta'
 import { favoriteService } from '@renderer/services/favorite.service'
+import FriendProfileModal from '@renderer/components/contacts/FriendProfileModal'
+import GroupProfileModal from '@renderer/components/groups/GroupProfileModal'
 
 interface Chat {
   id: string
@@ -74,6 +76,10 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
   const [favoritedIds, setFavoritedIds] = useState<Set<string>>(new Set())
   // 复制 / 收藏等操作的轻提示
   const [feedback, setFeedback] = useState<string | null>(null)
+  // 好友资料弹窗：私聊顶部点击头像/昵称打开
+  const [profileUserId, setProfileUserId] = useState<string | null>(null)
+  // 群聊信息弹窗：群聊顶部点击头像/昵称或「更多」按钮打开
+  const [showGroupProfile, setShowGroupProfile] = useState(false)
 
   const scrollToBottom: () => void = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -377,7 +383,15 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
           </button>
         )}
 
-        <div className="chat-header-profile">
+        <div
+          className="chat-header-profile"
+          onClick={() => {
+            if (isGroup) setShowGroupProfile(true)
+            else if (chat?.peerUserId) setProfileUserId(chat.peerUserId)
+          }}
+          style={{ cursor: isGroup || chat?.peerUserId ? 'pointer' : 'default' }}
+          title={isGroup ? '查看群聊信息' : chat?.peerUserId ? '查看好友资料' : undefined}
+        >
           <div className={`chat-header-avatar ${isGroup ? 'is-group' : ''}`}>
             {isGroup ? (
               <GroupAvatar memberCount={chat.memberCount} />
@@ -396,13 +410,34 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
         </div>
 
         <div className="chat-header-actions">
-          <button className="chat-action-button" title="更多">
+          <button
+            className="chat-action-button"
+            title={isGroup ? '查看群聊信息' : '查看好友资料'}
+            onClick={() => {
+              if (isGroup) setShowGroupProfile(true)
+              else if (chat?.peerUserId) setProfileUserId(chat.peerUserId)
+            }}
+          >
             <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor">
               <path d="M5 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm7 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm7 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4z" />
             </svg>
           </button>
         </div>
       </div>
+
+      {profileUserId && (
+        <FriendProfileModal userId={profileUserId} onClose={() => setProfileUserId(null)} />
+      )}
+
+      {isGroup && showGroupProfile && chat && (
+        <GroupProfileModal
+          roomId={chat.id}
+          groupName={chat.name}
+          memberCount={chat.memberCount}
+          onClose={() => setShowGroupProfile(false)}
+          onLeft={() => setShowGroupProfile(false)}
+        />
+      )}
 
       {/* Messages */}
       <div
@@ -459,11 +494,25 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
                 </div>
               </div>
               {message.sender === 'me' &&
-                (message.status === 'sending' || message.status === 'uploading') && (
+                (message.status === 'pending' ||
+                  message.status === 'sending' ||
+                  message.status === 'uploading') && (
                   <span
                     className="message-status is-sending"
-                    aria-label={message.status === 'uploading' ? '上传中' : '发送中'}
-                    title={message.status === 'uploading' ? '上传中' : '发送中'}
+                    aria-label={
+                      message.status === 'uploading'
+                        ? '上传中'
+                        : message.status === 'pending'
+                          ? '等待发送'
+                          : '发送中'
+                    }
+                    title={
+                      message.status === 'uploading'
+                        ? '上传中'
+                        : message.status === 'pending'
+                          ? '等待发送'
+                          : '发送中'
+                    }
                   />
                 )}
               {message.sender === 'me' && message.status === 'failed' && (

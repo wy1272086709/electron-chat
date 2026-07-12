@@ -1,5 +1,5 @@
 import type { Socket } from 'socket.io-client'
-import type { AppNotification, FriendRequestAction } from '@renderer/types/notification.types'
+import type { AppNotification, NotificationAction } from '@renderer/types/notification.types'
 import type { AppPanel, Favorite, LayoutChat, LayoutMessage } from '@renderer/types/layout.types'
 
 export interface StartChatFriendSnapshot {
@@ -37,13 +37,17 @@ export interface ChatContextValue {
   sendAttachment: (file: File, caption?: string) => void
   retrySendMessage: (messageId: string) => void
   startChatWithFriend: (userId: string, friend?: StartChatFriendSnapshot) => Promise<void>
+  removeFriend: (friendId: string) => Promise<boolean>
+  leaveGroup: (roomId: string) => Promise<boolean>
 }
 
 export interface NotificationsContextValue {
   notifications: AppNotification[]
+  pendingNotificationCount: number
   markNotificationAsRead: (id: string) => Promise<void>
   markAllNotificationsAsRead: () => Promise<void>
-  handleFriendRequest: (id: string, action: FriendRequestAction) => Promise<void>
+  handleFriendRequest: (id: string, action: NotificationAction) => Promise<void>
+  handleGroupInvitation: (id: string, action: NotificationAction) => Promise<void>
 }
 
 export interface FavoritesContextValue {

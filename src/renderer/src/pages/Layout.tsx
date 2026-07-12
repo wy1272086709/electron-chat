@@ -4,14 +4,14 @@ import LeftPanel from '@renderer/components/layout/LeftPanel'
 import ProfileModal from '@renderer/components/layout/ProfileModal'
 import {
   LayoutProvider,
-  useChatContext,
+  useNotificationsContext,
   useNavigationContext
 } from '@renderer/context/LayoutContext'
 import { useProfile } from '@renderer/hooks/useProfile'
 
 const LayoutShell: React.FC = () => {
   const { activePanel, navigatePanel } = useNavigationContext()
-  const { unreadCount } = useChatContext()
+  const { pendingNotificationCount } = useNotificationsContext()
   const [showProfileModal, setProfileModalVisible] = React.useState(false)
   const { profile, handleInputChange, handleAvatarChange, handleSubmit } = useProfile({
     onSubmitSuccess: () => setProfileModalVisible(false)
@@ -26,7 +26,7 @@ const LayoutShell: React.FC = () => {
       <LeftPanel
         activePanel={activePanel}
         setActivePanel={navigatePanel}
-        unreadCount={unreadCount}
+        notificationBadgeCount={pendingNotificationCount}
         setShowProfileModal={handleShowProfileModal}
         profile={profile}
       />

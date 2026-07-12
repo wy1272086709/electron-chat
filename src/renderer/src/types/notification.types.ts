@@ -27,7 +27,8 @@ export interface NotificationExtra {
 /**
  * 通知记录
  * - GET /notifications、GET /notifications/friendRequests 返回元素均含 sender 嵌套；
- * - POST /notifications/handleFriendRequest 返回的是裸记录（不含 sender），更新本地时需保留原 sender。
+ * - POST /notifications/handleFriendRequest、handleGroupInvitation 返回的是裸记录（不含 sender），
+ *   更新本地时需保留原 sender。
  */
 export interface AppNotification {
   id: string
@@ -45,5 +46,8 @@ export interface AppNotification {
   sender?: NotificationSender
 }
 
+// 处理通知动作
+export type NotificationAction = 'ACCEPTED' | 'REJECTED'
+
 // 处理好友请求动作
-export type FriendRequestAction = 'ACCEPTED' | 'REJECTED'
+export type FriendRequestAction = NotificationAction

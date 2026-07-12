@@ -51,15 +51,6 @@ const tabs: Array<{
         <path d="M3 6h7l2 2h9v11H3V6Zm2 4v7h14v-7H5Z" />
       </svg>
     )
-  },
-  {
-    id: 'chat',
-    label: '聊天记录',
-    icon: (
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M4 4h16v11H8l-4 4V4Zm3 4v2h10V8H7Zm0 4v2h7v-2H7Z" />
-      </svg>
-    )
   }
 ]
 

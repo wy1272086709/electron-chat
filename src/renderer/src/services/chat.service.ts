@@ -10,10 +10,12 @@ import { request, type ElectronResponse } from './request'
 import type {
   Conversation,
   ChatMessage,
+  ChatMessageSyncResult,
   RoomMember,
   ChatClearState,
   ChatRoomResult,
-  CreateGroupRoomParams
+  CreateGroupRoomParams,
+  LeaveRoomResult
 } from '../types/chat.types'
 
 /**
@@ -32,6 +34,17 @@ export const chatService = {
     })
   },
 
+  /** 可靠投递补拉 GET /chat/rooms/:roomId/messages/sync?afterMessageId=&take= */
+  async syncMessages(
+    roomId: string,
+    afterMessageId?: string,
+    take = 100
+  ): Promise<ElectronResponse<ChatMessageSyncResult>> {
+    return request.get<ChatMessageSyncResult>(`/chat/rooms/${roomId}/messages/sync`, {
+      params: { take, ...(afterMessageId ? { afterMessageId } : {}) }
+    })
+  },
+
   /** 3.5 成员列表 GET /chat/rooms/:roomId/members */
   async getRoomMembers(roomId: string): Promise<ElectronResponse<RoomMember[]>> {
     return request.get<RoomMember[]>(`/chat/rooms/${roomId}/members`)
@@ -45,6 +58,34 @@ export const chatService = {
   /** 3.7 清空聊天（软清空，仅对当前用户隐藏）POST /chat/rooms/:roomId/clear */
   async clearRoom(roomId: string): Promise<ElectronResponse<ChatClearState>> {
     return request.post<ChatClearState>(`/chat/rooms/${roomId}/clear`)
+  },
+
+  /** 3.8 退出群聊 POST /chat/rooms/:roomId/leave（群主退出自动转让，最后一人退出则解散） */
+  async leaveGroup(roomId: string): Promise<ElectronResponse<LeaveRoomResult>> {
+    return request.post<LeaveRoomResult>(`/chat/rooms/${roomId}/leave`)
+  },
+
+  /** 邀请成员加入群聊 POST /chat/rooms/:roomId/invitations（发通知，待对方确认） */
+  async inviteMembers(
+    roomId: string,
+    memberIds: string[]
+  ): Promise<ElectronResponse<{ notificationIds?: string[]; invitedMemberIds?: string[] }>> {
+    return request.post<{ notificationIds?: string[]; invitedMemberIds?: string[] }>(
+      `/chat/rooms/${roomId}/invitations`,
+      {
+        memberIds
+      }
+    )
+  },
+
+  /** 兼容旧的直接加人接口，仅用于后端管理场景；普通邀请成员不要调用这个方法 */
+  async addMembersDirectly(
+    roomId: string,
+    memberIds: string[]
+  ): Promise<ElectronResponse<{ addedMemberIds: string[] }>> {
+    return request.post<{ addedMemberIds: string[] }>(`/chat/rooms/${roomId}/members`, {
+      memberIds
+    })
   },
 
   /** 3.1 创建群聊 POST /chat/rooms/group */

@@ -1,12 +1,14 @@
 import React, { useEffect, useState } from 'react'
-import type { AppNotification, FriendRequestAction } from '@renderer/types/notification.types'
+import type { AppNotification, NotificationAction } from '@renderer/types/notification.types'
 import { resolveAvatarUrl } from '@renderer/utils/avatar-url'
+
+const NOTIFICATION_EXPIRE_MS = 7 * 24 * 60 * 60 * 1000
 
 interface NotificationsProps {
   notifications: AppNotification[]
   onMarkRead: (id: string) => void
-  onMarkAllRead: () => void
-  onHandleFriendRequest: (id: string, action: FriendRequestAction) => void
+  onHandleFriendRequest: (id: string, action: NotificationAction) => void
+  onHandleGroupInvitation: (id: string, action: NotificationAction) => void
 }
 
 // ISO 时间 → 相对时间（刚刚 / X分钟前 / X小时前 / X天前 / 月日）
@@ -25,15 +27,20 @@ const formatRelativeTime = (iso: string): string => {
   return d.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
 }
 
+const isExpiredPendingNotification = (notification: AppNotification): boolean => {
+  if (notification.result !== 'PENDING') return false
+  const createdAt = new Date(notification.createdAt).getTime()
+  return !Number.isNaN(createdAt) && Date.now() - createdAt >= NOTIFICATION_EXPIRE_MS
+}
+
 const Notifications: React.FC<NotificationsProps> = ({
   notifications,
   onMarkRead,
-  onMarkAllRead,
-  onHandleFriendRequest
+  onHandleFriendRequest,
+  onHandleGroupInvitation
 }) => {
-  const [selectedTab, setSelectedTab] = useState<'all' | 'unread'>('all')
   const [senderAvatars, setSenderAvatars] = useState<Record<string, string>>({})
-  console.log('Notifications rendered with notifications:', notifications)
+
   useEffect(() => {
     let active = true
 
@@ -55,15 +62,6 @@ const Notifications: React.FC<NotificationsProps> = ({
     }
   }, [notifications])
 
-  const filteredNotifications = notifications.filter((notification) => {
-    if (selectedTab === 'unread') {
-      return !notification.isRead
-    }
-    return true
-  })
-
-  const unreadCount = notifications.filter((n) => !n.isRead).length
-
   // 点击单条通知：未读则标记已读
   const handleClick = (notification: AppNotification): void => {
     if (!notification.isRead) {
@@ -79,10 +77,12 @@ const Notifications: React.FC<NotificationsProps> = ({
     onHandleFriendRequest(id, 'REJECTED')
   }
 
-  const handleJoinGroup = (): void => {
-    // TODO: 后端暂无「群邀请处理」接口（notification.service 未提供），先给提示
-    console.warn('[Notifications] 群邀请处理接口暂未提供')
-    alert('群邀请处理接口暂未提供')
+  const handleAcceptGroup = (id: string): void => {
+    onHandleGroupInvitation(id, 'ACCEPTED')
+  }
+
+  const handleDeclineGroup = (id: string): void => {
+    onHandleGroupInvitation(id, 'REJECTED')
   }
 
   return (
@@ -90,30 +90,6 @@ const Notifications: React.FC<NotificationsProps> = ({
       {/* Header */}
       <div className="panel-header">
         <h2>通知</h2>
-        <button
-          className="mark-all-read-button"
-          onClick={onMarkAllRead}
-          disabled={unreadCount === 0}
-        >
-          标记全部已读
-        </button>
-      </div>
-
-      {/* Tabs */}
-      <div className="notifications-tabs">
-        <button
-          className={`notification-tab ${selectedTab === 'all' ? 'active' : ''}`}
-          onClick={() => setSelectedTab('all')}
-        >
-          全部
-        </button>
-        <button
-          className={`notification-tab ${selectedTab === 'unread' ? 'active' : ''}`}
-          onClick={() => setSelectedTab('unread')}
-        >
-          未读
-          {unreadCount > 0 && <span className="notification-badge">{unreadCount}</span>}
-        </button>
       </div>
 
       {/* Notifications List */}
@@ -141,6 +117,14 @@ const Notifications: React.FC<NotificationsProps> = ({
               (notification.extra?.message || '').trim() ||
               (isFriend ? '请求添加你为好友' : '邀请你加入群聊')
             const isPending = notification.result === 'PENDING'
+            const isExpired = isExpiredPendingNotification(notification)
+            const canHandle = isPending && !isExpired
+            const statusClass = isExpired ? 'expired' : notification.result.toLowerCase()
+            const statusText = isExpired
+              ? '已过期'
+              : notification.result === 'ACCEPTED'
+                ? '已接受'
+                : '已拒绝'
 
             return (
               <div
@@ -185,7 +169,7 @@ const Notifications: React.FC<NotificationsProps> = ({
                 </div>
 
                 {/* Actions / Status */}
-                {isPending ? (
+                {canHandle ? (
                   <div className="notification-actions">
                     {isFriend ? (
                       <div className="friend-request-actions">
@@ -209,21 +193,30 @@ const Notifications: React.FC<NotificationsProps> = ({
                         </button>
                       </div>
                     ) : (
-                      <button
-                        className="action-button accept"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleJoinGroup()
-                        }}
-                      >
-                        加入
-                      </button>
+                      <div className="friend-request-actions">
+                        <button
+                          className="action-button accept"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleAcceptGroup(notification.id)
+                          }}
+                        >
+                          同意
+                        </button>
+                        <button
+                          className="action-button decline"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleDeclineGroup(notification.id)
+                          }}
+                        >
+                          拒绝
+                        </button>
+                      </div>
                     )}
                   </div>
                 ) : (
-                  <span className={`notification-status ${notification.result.toLowerCase()}`}>
-                    {notification.result === 'ACCEPTED' ? '已接受' : '已拒绝'}
-                  </span>
+                  <span className={`notification-status ${statusClass}`}>{statusText}</span>
                 )}
               </div>
             )
@@ -232,64 +225,6 @@ const Notifications: React.FC<NotificationsProps> = ({
       </div>
 
       <style>{`
-        .mark-all-read-button {
-          padding: 6px 12px;
-          background-color: #2a2b3a;
-          color: #666;
-          border: none;
-          border-radius: 6px;
-          font-size: 14px;
-          cursor: pointer;
-          transition: all 0.3s ease;
-        }
-
-        .mark-all-read-button:hover {
-          background-color: #3a3b4a;
-          color: white;
-        }
-
-        .mark-all-read-button:disabled {
-          opacity: 0.5;
-          cursor: not-allowed;
-        }
-
-        .notifications-tabs {
-          display: flex;
-          gap: 24px;
-          margin-bottom: 20px;
-          padding-bottom: 16px;
-          border-bottom: 1px solid #33333c;
-        }
-
-        .notification-tab {
-          position: relative;
-          padding: 8px 0;
-          background: none;
-          border: none;
-          color: #666;
-          font-size: 15px;
-          cursor: pointer;
-          transition: color 0.3s ease;
-        }
-
-        .notification-tab.active {
-          color: white;
-        }
-
-        .notification-badge {
-          position: absolute;
-          top: -4px;
-          right: -20px;
-          background: #ef4444;
-          color: white;
-          border-radius: 10px;
-          padding: 2px 6px;
-          font-size: 10px;
-          font-weight: 600;
-          min-width: 16px;
-          text-align: center;
-        }
-
         .notification-item.read {
           opacity: 0.6;
         }
@@ -368,6 +303,11 @@ const Notifications: React.FC<NotificationsProps> = ({
         .notification-status.rejected {
           background: rgba(239, 68, 68, 0.15);
           color: #ef4444;
+        }
+
+        .notification-status.expired {
+          background: rgba(148, 163, 184, 0.14);
+          color: #9ca3af;
         }
 
         .empty-notifications {

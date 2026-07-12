@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import FriendAvatar from '@renderer/assets/friend_avatar.svg'
 import AddFriendModal from '@renderer/components/contacts/AddFriendModal'
+import FriendProfileModal from '@renderer/components/contacts/FriendProfileModal'
 import { userService } from '@renderer/services/user.service'
 import type { UserInfo } from '@renderer/types/api.types'
 import { resolveAvatarUrl } from '@renderer/utils/avatar-url'
@@ -29,6 +30,7 @@ const Contacts: React.FC<ContactsProps> = ({ onStartChat }) => {
   const [keyword, setKeyword] = useState('')
   const [loading, setLoading] = useState(true)
   const [isAddFriendOpen, setIsAddFriendOpen] = useState(false)
+  const [profileFriend, setProfileFriend] = useState<Contact | null>(null)
 
   const loadFriends = useCallback(async (): Promise<void> => {
     setLoading(true)
@@ -174,18 +176,32 @@ const Contacts: React.FC<ContactsProps> = ({ onStartChat }) => {
                       <span className="contact-name">{friend.name}</span>
                       <span className="contact-username">@{friend.username}</span>
                     </div>
-                    <button
-                      className="contact-chat-button"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        onStartChat(friend.id, friend)
-                      }}
-                      title="发消息"
-                    >
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z" />
-                      </svg>
-                    </button>
+                    <div className="contact-actions">
+                      <button
+                        className="contact-chat-button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setProfileFriend(friend)
+                        }}
+                        title="资料"
+                      >
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
+                        </svg>
+                      </button>
+                      <button
+                        className="contact-chat-button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onStartChat(friend.id, friend)
+                        }}
+                        title="发消息"
+                      >
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z" />
+                        </svg>
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -330,6 +346,13 @@ const Contacts: React.FC<ContactsProps> = ({ onStartChat }) => {
           transition: all 0.3s ease;
         }
 
+        .contact-actions {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          flex-shrink: 0;
+        }
+
         .contact-item:hover .contact-chat-button {
           opacity: 1;
         }
@@ -355,6 +378,17 @@ const Contacts: React.FC<ContactsProps> = ({ onStartChat }) => {
           onClose={() => setIsAddFriendOpen(false)}
           onAdded={() => {
             void loadFriends()
+          }}
+        />
+      )}
+      {profileFriend && (
+        <FriendProfileModal
+          userId={profileFriend.id}
+          initialSnapshot={profileFriend}
+          onClose={() => setProfileFriend(null)}
+          onRemoved={() => {
+            void loadFriends()
+            setProfileFriend(null)
           }}
         />
       )}

@@ -31,6 +31,31 @@ interface ChatListProps {
   onRefresh?: (newRoomId?: string) => void
 }
 
+const normalizeSearchText = (value: string): string =>
+  value.trim().toLowerCase().replace(/\s+/g, '')
+
+const isFuzzyMatch = (source: string, keyword: string): boolean => {
+  if (!keyword) return true
+  const normalizedSource = normalizeSearchText(source)
+  if (normalizedSource.includes(keyword)) return true
+
+  let keywordIndex = 0
+  for (const char of normalizedSource) {
+    if (char === keyword[keywordIndex]) {
+      keywordIndex += 1
+      if (keywordIndex === keyword.length) return true
+    }
+  }
+  return false
+}
+
+const matchesChatKeyword = (chat: Chat, keyword: string): boolean => {
+  if (!keyword) return true
+  return [chat.name, chat.lastMessage, chat.time, chat.id].some((field) =>
+    isFuzzyMatch(field || '', keyword)
+  )
+}
+
 const ChatList: React.FC<ChatListProps> = ({
   chats,
   activePanel,
@@ -42,6 +67,7 @@ const ChatList: React.FC<ChatListProps> = ({
   onRefresh
 }) => {
   const [isAddGroupModalOpen, setIsAddGroupModalOpen] = React.useState(false)
+  const [searchText, setSearchText] = React.useState('')
   const [contextMenu, setContextMenu] = React.useState<{
     visible: boolean
     x: number
@@ -59,6 +85,12 @@ const ChatList: React.FC<ChatListProps> = ({
     { id: string; name: string; avatar: string; isOnline: boolean }[]
   >([])
   const [currentUserId, setCurrentUserId] = React.useState<string>('')
+
+  const searchKeyword = React.useMemo(() => normalizeSearchText(searchText), [searchText])
+  const filteredChats = React.useMemo(
+    () => chats.filter((chat) => matchesChatKeyword(chat, searchKeyword)),
+    [chats, searchKeyword]
+  )
 
   const openAddGroupModal = async (): Promise<void> => {
     const me = await secureStorageService.getUserInfo()
@@ -174,102 +206,118 @@ const ChatList: React.FC<ChatListProps> = ({
         <svg className="search-icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
           <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" />
         </svg>
-        <input type="text" className="search-input" placeholder="搜索聊天" />
+        <input
+          type="text"
+          className="search-input"
+          placeholder={activePanel === 'groups' ? '搜索群聊' : '搜索聊天'}
+          value={searchText}
+          onChange={(e) => setSearchText(e.target.value)}
+        />
       </div>
 
       {/* Chat List */}
       <div className="chat-list">
-        {chats.map((chat) => {
-          const displayTime = formatDate(chat.time)
-          const unreadCount = getUnreadCount(chat.unread)
+        {filteredChats.length === 0 ? (
+          <div className="chat-list-empty">
+            {searchKeyword
+              ? '未找到匹配的聊天'
+              : activePanel === 'groups'
+                ? '暂无群聊'
+                : '暂无聊天'}
+          </div>
+        ) : (
+          filteredChats.map((chat) => {
+            const displayTime = formatDate(chat.time)
+            const unreadCount = getUnreadCount(chat.unread)
 
-          return (
-            <div
-              key={chat.id}
-              className={`chat-item ${selectedChat === chat.id ? 'active' : ''}`}
-              onClick={() => onChatSelect(chat.id)}
-              onContextMenu={(e) => handleContextMenu(e, chat)}
-            >
-              {/* Avatar */}
-              <div className={`chat-avatar ${chat.type === 'group' ? 'is-group' : ''}`}>
-                {chat.type === 'group' ? (
-                  <GroupAvatar memberCount={chat.memberCount} />
-                ) : (
-                  <img
-                    src={chat.avatar || FriendAvatar}
-                    alt={chat.name}
-                    onError={(e) => {
-                      e.currentTarget.src = FriendAvatar
-                    }}
-                  />
-                )}
-                {chat.isOnline && chat.type !== 'group' && (
-                  <div
-                    className="online-indicator"
-                    style={{
-                      position: 'absolute',
-                      bottom: 2,
-                      right: 2,
-                      width: 12,
-                      height: 12,
-                      borderRadius: '50%',
-                      backgroundColor: '#10b981',
-                      border: '2px solid #22222b'
-                    }}
-                  />
+            return (
+              <div
+                key={chat.id}
+                className={`chat-item ${selectedChat === chat.id ? 'active' : ''}`}
+                onClick={() => onChatSelect(chat.id)}
+                onContextMenu={(e) => handleContextMenu(e, chat)}
+              >
+                {/* Avatar */}
+                <div className={`chat-avatar ${chat.type === 'group' ? 'is-group' : ''}`}>
+                  {chat.type === 'group' ? (
+                    <GroupAvatar memberCount={chat.memberCount} />
+                  ) : (
+                    <img
+                      src={chat.avatar || FriendAvatar}
+                      alt={chat.name}
+                      onError={(e) => {
+                        e.currentTarget.src = FriendAvatar
+                      }}
+                    />
+                  )}
+                  {chat.isOnline && chat.type !== 'group' && (
+                    <div
+                      className="online-indicator"
+                      style={{
+                        position: 'absolute',
+                        bottom: 2,
+                        right: 2,
+                        width: 12,
+                        height: 12,
+                        borderRadius: '50%',
+                        backgroundColor: '#10b981',
+                        border: '2px solid #22222b'
+                      }}
+                    />
+                  )}
+                </div>
+
+                {/* Chat Info */}
+                <div className="chat-info">
+                  <div className="chat-header-row">
+                    <span className="chat-name">{chat.name}</span>
+                    {displayTime && <span className="chat-time">{displayTime}</span>}
+                  </div>
+                  <div className="chat-header-row">
+                    <span className="chat-preview">{chat.lastMessage}</span>
+                    {unreadCount > 0 && <span className="unread-count">{unreadCount}</span>}
+                  </div>
+                </div>
+
+                {/* Action Buttons (hover only) */}
+                {selectedChat === chat.id && (
+                  <div className="chat-actions">
+                    <button
+                      className="delete-chat-button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onDeleteChat(chat.id)
+                      }}
+                      style={{
+                        position: 'absolute',
+                        right: 12,
+                        top: '50%',
+                        transform: 'translateY(-50%)',
+                        width: 24,
+                        height: 24,
+                        borderRadius: '50%',
+                        background: 'none',
+                        border: 'none',
+                        color: '#666',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        opacity: 0,
+                        transition: 'opacity 0.2s'
+                      }}
+                      title="删除聊天"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
+                      </svg>
+                    </button>
+                  </div>
                 )}
               </div>
-
-              {/* Chat Info */}
-              <div className="chat-info">
-                <div className="chat-header-row">
-                  <span className="chat-name">{chat.name}</span>
-                  {displayTime && <span className="chat-time">{displayTime}</span>}
-                </div>
-                <div className="chat-header-row">
-                  <span className="chat-preview">{chat.lastMessage}</span>
-                  {unreadCount > 0 && <span className="unread-count">{unreadCount}</span>}
-                </div>
-              </div>
-
-              {/* Action Buttons (hover only) */}
-              {selectedChat === chat.id && (
-                <div className="chat-actions">
-                  <button
-                    className="delete-chat-button"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      onDeleteChat(chat.id)
-                    }}
-                    style={{
-                      position: 'absolute',
-                      right: 12,
-                      top: '50%',
-                      transform: 'translateY(-50%)',
-                      width: 24,
-                      height: 24,
-                      borderRadius: '50%',
-                      background: 'none',
-                      border: 'none',
-                      color: '#666',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      opacity: 0,
-                      transition: 'opacity 0.2s'
-                    }}
-                    title="删除聊天"
-                  >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                      <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
-                    </svg>
-                  </button>
-                </div>
-              )}
-            </div>
-          )
-        })}
+            )
+          })
+        )}
       </div>
       {isAddGroupModalOpen && activePanel === 'groups' && (
         <AddGroupModal
@@ -343,6 +391,13 @@ const ChatList: React.FC<ChatListProps> = ({
           display: flex;
           align-items: center;
           justify-content: space-between;
+        }
+
+        .chat-list-empty {
+          padding: 32px 20px;
+          color: #8b8b95;
+          font-size: 14px;
+          text-align: center;
         }
 
         .online-indicator {

@@ -8,7 +8,7 @@ import type { Profile } from '@renderer/hooks/useProfile'
 interface LeftPanelProps {
   activePanel: AppPanel
   setActivePanel: (panel: AppPanel) => void
-  unreadCount: number
+  notificationBadgeCount: number
   setShowProfileModal: (show: boolean) => void
   profile: Profile
 }
@@ -16,7 +16,7 @@ interface LeftPanelProps {
 const LeftPanel: React.FC<LeftPanelProps> = ({
   activePanel,
   setActivePanel,
-  unreadCount,
+  notificationBadgeCount,
   setShowProfileModal,
   profile
 }) => {
@@ -87,8 +87,8 @@ const LeftPanel: React.FC<LeftPanelProps> = ({
             title={item.label}
           >
             {item.icon}
-            {item.badge && unreadCount > 0 && (
-              <span className="notification-badge">{unreadCount}</span>
+            {item.badge && notificationBadgeCount > 0 && (
+              <span className="notification-badge">{notificationBadgeCount}</span>
             )}
           </div>
         ))}
