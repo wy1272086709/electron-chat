@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import { CloseOutlined } from '@ant-design/icons'
 import TransferProgress from '@renderer/components/common/TransferProgress'
 import type { LayoutMessage } from '@renderer/types/layout.types'
 import { resolveMediaUrl } from '@renderer/utils/media-url'
@@ -181,13 +182,16 @@ const MessageMedia: React.FC<MessageMediaProps> = ({ message, onPreviewImage }) 
         <div className="message-file-preview-overlay" onClick={() => setShowFilePreview(false)}>
           <section className="message-file-preview" onClick={(e) => e.stopPropagation()}>
             <header className="message-file-preview-header">
-              <button type="button" onClick={() => setShowFilePreview(false)}>
-                <svg viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z" />
-                </svg>
-              </button>
+              <span aria-hidden="true" />
               <h3>文件预览</h3>
-              <span />
+              <button
+                type="button"
+                aria-label="关闭文件预览"
+                title="关闭"
+                onClick={() => setShowFilePreview(false)}
+              >
+                <CloseOutlined />
+              </button>
             </header>
             <div className="message-file-preview-body">
               <div className={`message-file-preview-icon tone-${tone}`}>
@@ -261,12 +265,16 @@ const MessageMedia: React.FC<MessageMediaProps> = ({ message, onPreviewImage }) 
               border: 0;
               background: transparent;
               color: #f5f7fb;
+              border-radius: 6px;
+              display: grid;
+              place-items: center;
+              justify-self: end;
+              font-size: 24px;
               cursor: pointer;
             }
 
-            .message-file-preview-header svg {
-              width: 28px;
-              height: 28px;
+            .message-file-preview-header button:hover {
+              background: rgba(255, 255, 255, 0.08);
             }
 
             .message-file-preview-body {
