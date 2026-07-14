@@ -5,20 +5,36 @@
 export {}
 
 declare global {
+  interface FileTransferProgress {
+    transferId: string
+    direction: 'upload' | 'download'
+    loaded: number
+    total: number
+    progress: number
+  }
+
   interface Window {
     electronAPI: {
       openFile: () => Promise<string[]>
+      getPathForFile: (file: File) => string
       uploadFile: (payload: {
         presignedUrl: string
-        arrayBuffer: ArrayBuffer
+        filePath?: string
+        arrayBuffer?: ArrayBuffer
         contentType: string
+        transferId?: string
       }) => Promise<{ result: boolean; data: unknown; code: number; message?: string }>
-      downloadFile: (payload: { previewUrl: string; fileName: string }) => Promise<{
+      downloadFile: (payload: {
+        previewUrl: string
+        fileName: string
+        transferId?: string
+      }) => Promise<{
         result: boolean
         data: { path: string } | null
         code: number
         message?: string
       }>
+      onTransferProgress: (callback: (payload: FileTransferProgress) => void) => () => void
       openLocalFile: (payload: { path: string }) => Promise<{
         result: boolean
         data: { path: string } | null

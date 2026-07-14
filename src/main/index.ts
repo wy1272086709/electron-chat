@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, shell, dialog, safeStorage, globalShortcut } from 'electron'
 import { join, parse, resolve, sep } from 'path'
-import { createWriteStream, existsSync, mkdirSync } from 'fs'
+import { createReadStream, createWriteStream, existsSync, mkdirSync, statSync } from 'fs'
 import { pipeline } from 'stream/promises'
 import axios, { type AxiosRequestConfig } from 'axios'
 import ElectronStore, { type Options as ElectronStoreOptions } from 'electron-store'
@@ -388,7 +388,7 @@ app.whenReady().then(() => {
     }
   })
 
-  // 文件上传：把渲染器拿到的预签名 PUT URL + 文件字节，由主进程(Node)执行 PUT。
+  // 文件上传：优先从本地路径创建读取流，避免大文件在渲染器、IPC、主进程各保留一份副本。
   // 后端无 HTTP CORS，渲染器直发 MinIO 会被拦；主进程不受 CORS 限制。
   // 注意：故意不走 runWithIpcBackpressure——该队列 8 并发/80 排队、10s 超时，
   // 专为小 JSON 调校，几个上传会饿死普通 API；上传单独 handler，无超时上限。
@@ -396,15 +396,48 @@ app.whenReady().then(() => {
     'upload-file',
     async (
       _event,
-      payload: { presignedUrl: string; arrayBuffer: ArrayBuffer; contentType: string }
+      payload: {
+        presignedUrl: string
+        filePath?: string
+        arrayBuffer?: ArrayBuffer
+        contentType: string
+        transferId?: string
+      }
     ) => {
       try {
-        const headers = payload.contentType ? { 'Content-Type': payload.contentType } : undefined
-        await transferClient.put(payload.presignedUrl, Buffer.from(payload.arrayBuffer), {
-          headers,
+        let body: NodeJS.ReadableStream | Buffer
+        let contentLength: number
+
+        if (payload.filePath) {
+          const fileStat = statSync(payload.filePath)
+          if (!fileStat.isFile()) throw new Error('上传目标不是文件')
+          body = createReadStream(payload.filePath)
+          contentLength = fileStat.size
+        } else if (payload.arrayBuffer) {
+          body = Buffer.from(payload.arrayBuffer)
+          contentLength = payload.arrayBuffer.byteLength
+        } else {
+          throw new Error('缺少待上传的文件数据')
+        }
+
+        await transferClient.put(payload.presignedUrl, body, {
+          headers: {
+            ...(payload.contentType ? { 'Content-Type': payload.contentType } : {}),
+            'Content-Length': contentLength
+          },
           timeout: 0,
           maxContentLength: Infinity,
-          maxBodyLength: Infinity
+          maxBodyLength: Infinity,
+          onUploadProgress: ({ loaded }) => {
+            if (!payload.transferId || _event.sender.isDestroyed()) return
+            _event.sender.send('file-transfer-progress', {
+              transferId: payload.transferId,
+              direction: 'upload',
+              loaded,
+              total: contentLength,
+              progress: contentLength > 0 ? Math.min(loaded / contentLength, 1) : 0
+            })
+          }
         })
         return { result: true, data: null, code: 0, message: '上传成功' }
       } catch (error) {
@@ -421,12 +454,23 @@ app.whenReady().then(() => {
   // 文件名做 basename 清洗，防止 path traversal 逃出下载目录。
   ipcMain.handle(
     'download-file',
-    async (_event, payload: { previewUrl: string; fileName: string }) => {
+    async (_event, payload: { previewUrl: string; fileName: string; transferId?: string }) => {
       try {
         const dest = getAvailableDownloadPath(payload.fileName)
         const response = await transferClient.get(payload.previewUrl, {
           responseType: 'stream',
-          timeout: 0
+          timeout: 0,
+          onDownloadProgress: ({ loaded, total }) => {
+            if (!payload.transferId || _event.sender.isDestroyed()) return
+            const fileSize = total || 0
+            _event.sender.send('file-transfer-progress', {
+              transferId: payload.transferId,
+              direction: 'download',
+              loaded,
+              total: fileSize,
+              progress: fileSize > 0 ? Math.min(loaded / fileSize, 1) : 0
+            })
+          }
         })
         await pipeline(response.data, createWriteStream(dest))
         return { result: true, data: { path: dest }, code: 0, message: '下载成功' }

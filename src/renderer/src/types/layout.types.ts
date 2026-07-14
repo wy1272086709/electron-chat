@@ -62,6 +62,8 @@ export interface LayoutMessage {
   senderName?: string
   senderAvatar?: string
   status?: MessageDeliveryStatus
+  /** 0-1 的真实上传字节进度；仅 uploading 状态存在。 */
+  uploadProgress?: number
   /** 发送失败原因，用于红点提示和排查上传 / socket 失败 */
   errorMessage?: string
   /** 消息类型，缺省 TEXT；IMAGE/FILE 时 attachment 必有 */

@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import TransferProgress from '@renderer/components/common/TransferProgress'
 import type { LayoutMessage } from '@renderer/types/layout.types'
 import { resolveMediaUrl } from '@renderer/utils/media-url'
 import {
@@ -27,6 +28,7 @@ const MessageMedia: React.FC<MessageMediaProps> = ({ message, onPreviewImage }) 
   const attachment = message.attachment
   const [resolvedImage, setResolvedImage] = useState({ key: '', url: '', attempted: false })
   const [downloading, setDownloading] = useState(false)
+  const [downloadProgress, setDownloadProgress] = useState(0)
   const downloadKey = attachment?.objectName || message.id
   const [downloadedPath, setDownloadedPath] = useState(downloadedFilePaths.get(downloadKey) || '')
   const [fileActionMessage, setFileActionMessage] = useState(downloadedPath ? '已保存到本地' : '')
@@ -75,7 +77,14 @@ const MessageMedia: React.FC<MessageMediaProps> = ({ message, onPreviewImage }) 
 
     if (!attachment.objectName || downloading) return
     setDownloading(true)
+    setDownloadProgress(0)
     setFileActionMessage('')
+    const transferId = `download-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+    const unsubscribe = window.electronAPI.onTransferProgress((event) => {
+      if (event.transferId === transferId && event.direction === 'download') {
+        setDownloadProgress(event.progress)
+      }
+    })
     try {
       const previewUrl = await resolveMediaUrl(attachment.objectName)
       if (!previewUrl) {
@@ -84,7 +93,8 @@ const MessageMedia: React.FC<MessageMediaProps> = ({ message, onPreviewImage }) 
       }
       const res = await window.electronAPI.downloadFile({
         previewUrl,
-        fileName: attachment.fileName
+        fileName: attachment.fileName,
+        transferId
       })
       if (!res.result) {
         setFileActionMessage(res.message || '接收文件失败')
@@ -98,6 +108,7 @@ const MessageMedia: React.FC<MessageMediaProps> = ({ message, onPreviewImage }) 
         setFileActionMessage('已保存到本地')
       }
     } finally {
+      unsubscribe()
       setDownloading(false)
     }
   }
@@ -118,7 +129,9 @@ const MessageMedia: React.FC<MessageMediaProps> = ({ message, onPreviewImage }) 
               : '图片暂不可预览'}
           </div>
         )}
-        {isUploading && <span className="message-media-spinner" aria-label="上传中" />}
+        {isUploading && (
+          <TransferProgress progress={message.uploadProgress || 0} label="上传中" size={32} />
+        )}
       </div>
     )
   }
@@ -143,12 +156,14 @@ const MessageMedia: React.FC<MessageMediaProps> = ({ message, onPreviewImage }) 
           <div className="message-media-file-name">{attachment.fileName || '未命名文件'}</div>
           <div className="message-media-file-meta">
             {[ext, formatFileSize(attachment.fileSize)].filter(Boolean).join(' · ')}
-            {isUploading ? ' · 上传中' : ''}
+            {isUploading ? ` · 上传 ${Math.round((message.uploadProgress || 0) * 100)}%` : ''}
           </div>
         </div>
         <div className="message-media-file-action">
           {downloading ? (
-            <span className="message-media-spinner small" />
+            <TransferProgress progress={downloadProgress} label="下载中" size={22} />
+          ) : isUploading ? (
+            <TransferProgress progress={message.uploadProgress || 0} label="上传中" size={22} />
           ) : (
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor">
               <path
@@ -186,8 +201,15 @@ const MessageMedia: React.FC<MessageMediaProps> = ({ message, onPreviewImage }) 
                 disabled={!attachment.objectName || downloading}
                 onClick={() => void handleReceiveFile()}
               >
-                {downloading ? '接收中…' : downloadedPath ? '打开文件' : '接收文件'}
+                {downloading
+                  ? `接收中 ${Math.round(downloadProgress * 100)}%`
+                  : downloadedPath
+                    ? '打开文件'
+                    : '接收文件'}
               </button>
+              {downloading && (
+                <TransferProgress progress={downloadProgress} label="下载中" size={34} />
+              )}
               {fileActionMessage && (
                 <p className="message-file-preview-action-tip">{fileActionMessage}</p>
               )}

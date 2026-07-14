@@ -474,6 +474,27 @@
   border-width: 2px;
 }
 
+.transfer-progress {
+  display: inline-block;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.3),
+    0 2px 8px rgba(0, 0, 0, 0.28);
+}
+
+.message-media.is-image > .transfer-progress {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.message-file-preview-body > .transfer-progress,
+.favorite-file-preview > .transfer-progress {
+  margin-top: 14px;
+}
+
 @keyframes message-media-spin {
   to {
     transform: rotate(360deg);
@@ -1263,6 +1284,13 @@
 .favorite-file-download:disabled {
   background: #b8c0cc;
   cursor: not-allowed;
+}
+
+.favorite-file-action-message {
+  margin: 12px 0 0;
+  color: #a6adb8;
+  font-size: 14px;
+  line-height: 1.4;
 }
 
 .favorite-text-detail {

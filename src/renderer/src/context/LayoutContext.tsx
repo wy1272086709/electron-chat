@@ -1255,7 +1255,13 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       caption?: string
     ): Promise<void> => {
       try {
-        const prepared = await uploadMedia(file)
+        const prepared = await uploadMedia(file, (progress) => {
+          setMessages((prev) =>
+            prev.map((message) =>
+              message.id === localId ? { ...message, uploadProgress: progress } : message
+            )
+          )
+        })
         const chat = chatsRef.current.find((c) => c.id === chatId)
         const pending: PendingReliableMessage = {
           localId,
@@ -1281,6 +1287,7 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
               ? {
                   ...m,
                   status: 'pending',
+                  uploadProgress: undefined,
                   attachment: {
                     ...m.attachment,
                     objectName: prepared.objectName,

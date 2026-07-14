@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { AxiosRequestConfig } from 'axios'
 
 // Custom APIs for renderer
@@ -39,15 +39,41 @@ if (process.contextIsolated) {
             throw error
           })
       },
-      // 媒体上传：把文件字节 PUT 到预签名 URL（由主进程执行，绕过 CORS）
+      // 获取用户选中文件的真实路径；大文件由主进程从磁盘流式读取，避免 IPC 复制整份字节。
+      getPathForFile: (file: File) => webUtils.getPathForFile(file),
+      // 媒体上传：优先传文件路径，内存文件（如粘贴截图）才传字节。
       uploadFile: (payload: {
         presignedUrl: string
-        arrayBuffer: ArrayBuffer
+        filePath?: string
+        arrayBuffer?: ArrayBuffer
         contentType: string
+        transferId?: string
       }) => ipcRenderer.invoke('upload-file', payload),
       // 媒体下载：流式写入系统下载目录
-      downloadFile: (payload: { previewUrl: string; fileName: string }) =>
+      downloadFile: (payload: { previewUrl: string; fileName: string; transferId?: string }) =>
         ipcRenderer.invoke('download-file', payload),
+      onTransferProgress: (
+        callback: (payload: {
+          transferId: string
+          direction: 'upload' | 'download'
+          loaded: number
+          total: number
+          progress: number
+        }) => void
+      ) => {
+        const listener = (
+          _event: Electron.IpcRendererEvent,
+          payload: {
+            transferId: string
+            direction: 'upload' | 'download'
+            loaded: number
+            total: number
+            progress: number
+          }
+        ): void => callback(payload)
+        ipcRenderer.on('file-transfer-progress', listener)
+        return () => ipcRenderer.removeListener('file-transfer-progress', listener)
+      },
       // 打开已下载到本地的文件
       openLocalFile: (payload: { path: string }) => ipcRenderer.invoke('open-local-file', payload)
     })

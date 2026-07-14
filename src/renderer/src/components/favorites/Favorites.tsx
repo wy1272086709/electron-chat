@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { DeleteOutlined, LoadingOutlined } from '@ant-design/icons'
+import TransferProgress from '@renderer/components/common/TransferProgress'
 import {
   favoriteService,
   toFavoriteApiType,
@@ -11,6 +12,7 @@ import { getFileTone } from '@renderer/utils/file-meta'
 import { resolveMediaUrl } from '@renderer/utils/media-url'
 
 type FavoriteTab = 'all' | FavoriteItemType
+const downloadedFavoritePaths = new Map<string, string>()
 
 const tabs: Array<{
   id: FavoriteTab
@@ -83,18 +85,6 @@ function getFavoriteSourceText(favorite: FavoriteItem): string {
   return `来自 ${favorite.source} ${formatSourceDate(favorite.time)}`
 }
 
-function downloadFavoriteFile(favorite: FavoriteItem): void {
-  if (!favorite.fileUrl || isExpired(favorite.expiresAt)) return
-  const anchor = document.createElement('a')
-  anchor.href = favorite.fileUrl
-  anchor.download = favorite.fileName || favorite.title
-  anchor.target = '_blank'
-  anchor.rel = 'noreferrer'
-  document.body.appendChild(anchor)
-  anchor.click()
-  anchor.remove()
-}
-
 const PAGE_SIZE = 20
 const MAX_TAKE = 100
 
@@ -152,6 +142,9 @@ const Favorites: React.FC = () => {
   const [hasMore, setHasMore] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [deletingIds, setDeletingIds] = useState<Set<string>>(() => new Set())
+  const [downloadingId, setDownloadingId] = useState<string | null>(null)
+  const [downloadProgress, setDownloadProgress] = useState(0)
+  const [fileActionMessage, setFileActionMessage] = useState('')
   const listRef = useRef<HTMLDivElement>(null)
   const loadMoreRef = useRef<HTMLDivElement>(null)
   const requestSeqRef = useRef(0)
@@ -283,6 +276,56 @@ const Favorites: React.FC = () => {
 
   const closeDetail = (): void => {
     setSelectedFavorite(null)
+    setFileActionMessage('')
+  }
+
+  const handleFavoriteFile = async (favorite: FavoriteItem): Promise<void> => {
+    if (!favorite.fileUrl || isExpired(favorite.expiresAt) || downloadingId === favorite.id) return
+
+    const downloadKey = favorite.fileUrl || favorite.id
+    const downloadedPath = downloadedFavoritePaths.get(downloadKey)
+    setFileActionMessage('')
+
+    if (downloadedPath) {
+      const response = await window.electronAPI.openLocalFile({ path: downloadedPath })
+      setFileActionMessage(response.result ? '已打开文件' : response.message || '打开文件失败')
+      return
+    }
+
+    setDownloadingId(favorite.id)
+    setDownloadProgress(0)
+    const transferId = `favorite-download-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+    const unsubscribe = window.electronAPI.onTransferProgress((event) => {
+      if (event.transferId === transferId && event.direction === 'download') {
+        setDownloadProgress(event.progress)
+      }
+    })
+    try {
+      const previewUrl = await resolveMediaUrl(favorite.fileUrl)
+      if (!previewUrl) {
+        setFileActionMessage('文件地址获取失败')
+        return
+      }
+
+      const response = await window.electronAPI.downloadFile({
+        previewUrl,
+        fileName: favorite.fileName || favorite.title,
+        transferId
+      })
+      if (!response.result || !response.data?.path) {
+        setFileActionMessage(response.message || '文件保存失败')
+        return
+      }
+
+      downloadedFavoritePaths.set(downloadKey, response.data.path)
+      setFileActionMessage('已保存到本地')
+    } catch (error) {
+      console.error('[Favorites] 文件下载失败:', error)
+      setFileActionMessage(error instanceof Error ? error.message : '文件保存失败')
+    } finally {
+      unsubscribe()
+      setDownloadingId(null)
+    }
   }
 
   const handleDelete = async (favorite: FavoriteItem): Promise<void> => {
@@ -461,11 +504,29 @@ const Favorites: React.FC = () => {
                 <button
                   className="favorite-file-download"
                   type="button"
-                  disabled={!selectedFavorite.fileUrl || isExpired(selectedFavorite.expiresAt)}
-                  onClick={() => downloadFavoriteFile(selectedFavorite)}
+                  disabled={
+                    !selectedFavorite.fileUrl ||
+                    isExpired(selectedFavorite.expiresAt) ||
+                    downloadingId === selectedFavorite.id
+                  }
+                  onClick={() => void handleFavoriteFile(selectedFavorite)}
                 >
-                  {isExpired(selectedFavorite.expiresAt) ? '文件已过期' : '接收文件'}
+                  {isExpired(selectedFavorite.expiresAt)
+                    ? '文件已过期'
+                    : downloadingId === selectedFavorite.id
+                      ? `接收中 ${Math.round(downloadProgress * 100)}%`
+                      : downloadedFavoritePaths.has(selectedFavorite.fileUrl || selectedFavorite.id)
+                        ? '打开文件'
+                        : '接收文件'}
                 </button>
+                {downloadingId === selectedFavorite.id && (
+                  <TransferProgress progress={downloadProgress} label="下载中" size={38} />
+                )}
+                {fileActionMessage && (
+                  <p className="favorite-file-action-message" role="status">
+                    {fileActionMessage}
+                  </p>
+                )}
               </div>
             ) : (
               <div className="favorite-text-detail">

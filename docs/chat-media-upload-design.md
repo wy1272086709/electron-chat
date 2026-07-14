@@ -1,5 +1,7 @@
 # 聊天图片 / 文件发送设计文档
 
+> 大文件流式传输、真实进度、IPC 契约和分片决策详见 [大文件传输与进度展示设计](./large-file-transfer-progress-design.md)。
+
 ## 目标
 
 让聊天支持接近微信的图片与文件体验：
@@ -36,7 +38,7 @@
 2. 生成对象存储 key：`chat-<yyyymmdd>-<timestamp>-<random>.<ext>`。
 3. 图片读取原始宽高，写入 `mediaWidth/mediaHeight`。
 4. 调用 `/minio/presignedUrl` 获取预签名 PUT URL。
-5. 将文件字节交给主进程 `upload-file` IPC，由主进程执行 PUT。
+5. 优先将文件本地路径交给主进程 `upload-file` IPC，由主进程创建读取流并执行 PUT；没有本地路径的粘贴图片使用字节兜底。
 6. 返回 `objectName/fileName/fileSize/fileType/messageType`。
 
 消息发送时只把 `objectName` 作为后端 `fileUrl` 保存，不保存预签名 URL。
@@ -45,8 +47,9 @@
 
 文件：`src/main/index.ts`
 
-- `upload-file`：主进程用 axios PUT 预签名 URL，绕过浏览器 CORS。
-- `download-file`：主进程流式下载预签名 GET URL 到系统下载目录，并打开所在文件夹。
+- `upload-file`：主进程用文件读取流 PUT 预签名 URL，绕过浏览器 CORS 并避免整文件内存复制。
+- `download-file`：主进程流式下载预签名 GET URL 到本地聊天下载目录。
+- `file-transfer-progress`：按 `transferId` 向渲染进程推送上传和下载的真实字节进度。
 
 ### 消息状态
 
@@ -64,7 +67,8 @@
 
 UI 约定：
 
-- `uploading/sending`：显示转圈状态。
+- `uploading`：显示由扇形逐步填满整圆的真实上传进度。
+- `sending`：显示等待服务端确认的转圈状态。
 - `failed`：显示红色感叹号，可点击重试。
 - `sent` 或服务端真实消息：不显示红点。
 
@@ -180,7 +184,15 @@ Socket 发送媒体消息时使用后端 `MessageType`：
 
 ## 暂不包含
 
-- 上传进度百分比：目前只有 `uploading/sending/sent/failed` 状态。
+- 分片上传 / 断点续传：目前使用单次预签名 PUT；Multipart Upload 需要后端提供初始化、分片签名和完成合并接口。
+- 取消传输：当前上传和下载任务开始后会执行到成功或失败。
 - 客户端缩略图生成：目前图片原图展示，`thumbnailUrl` 预留。
 - 视频 / 语音消息：后端支持 `VIDEO/AUDIO`，本次只实现图片与普通文件。
 - 文件大小限制：当前以前端不限制为主，依赖后端 / 对象存储限制。
+
+## 传输进度
+
+- 主进程通过 Axios 的字节进度回调计算上传 / 下载比例。
+- 每个任务使用独立 `transferId`，通过 preload 安全桥接到渲染进程，多个并发任务不会串进度。
+- 上传进度写入本地消息的 `uploadProgress`；聊天下载和收藏下载在组件内维护当前进度。
+- UI 使用 `conic-gradient` 从扇形逐步填满整圆，并同步展示整数百分比。
