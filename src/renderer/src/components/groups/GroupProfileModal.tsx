@@ -11,6 +11,7 @@ interface GroupProfileModalProps {
   roomId: string
   groupName: string
   memberCount?: number
+  onlineCount?: number
   onClose: () => void
   /** 退出群聊成功后的回调（调用方用来收尾，如回到会话列表） */
   onLeft?: () => void
@@ -37,6 +38,7 @@ const GroupProfileModal: React.FC<GroupProfileModalProps> = ({
   roomId,
   groupName,
   memberCount,
+  onlineCount,
   onClose,
   onLeft
 }) => {
@@ -93,8 +95,8 @@ const GroupProfileModal: React.FC<GroupProfileModalProps> = ({
   }
 
   return (
-    <div className="group-profile-modal" role="dialog" aria-modal="true" onClick={onClose}>
-      <div className="group-profile-content" onClick={(e) => e.stopPropagation()}>
+    <div className="group-profile-drawer-mask" role="dialog" aria-modal="true" onClick={onClose}>
+      <div className="group-profile-drawer" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div className="group-profile-header">
           <h2>群聊信息</h2>
@@ -106,45 +108,53 @@ const GroupProfileModal: React.FC<GroupProfileModalProps> = ({
         </div>
 
         {loading ? (
-          <div className="group-profile-loading">加载中...</div>
+          <div className="group-profile-body is-centered">
+            <div className="group-profile-loading">加载中...</div>
+          </div>
         ) : error ? (
-          <div className="group-profile-error">{error}</div>
+          <div className="group-profile-body is-centered">
+            <div className="group-profile-error">{error}</div>
+          </div>
         ) : (
           <>
-            {/* Avatar + name */}
-            <div className="group-profile-avatar-section">
-              <div className="group-profile-avatar">
-                <GroupAvatar memberCount={members.length || memberCount} />
+            <div className="group-profile-body">
+              {/* Avatar + name */}
+              <div className="group-profile-avatar-section">
+                <div className="group-profile-avatar">
+                  <GroupAvatar memberCount={members.length || memberCount} />
+                </div>
+                <div className="group-profile-name">{groupName}</div>
+                <div className="group-profile-count">
+                  {typeof onlineCount === 'number'
+                    ? `${onlineCount} 人在线 / ${members.length || (memberCount ?? 0)} 名成员`
+                    : `${members.length || (memberCount ?? 0)} 名成员`}
+                </div>
               </div>
-              <div className="group-profile-name">{groupName}</div>
-              <div className="group-profile-count">
-                {members.length || (memberCount ?? 0)} 名成员
-              </div>
-            </div>
 
-            {/* Member list */}
-            <div className="group-profile-members">
-              <div className="group-profile-members-title">群成员（{members.length}）</div>
-              <div className="group-profile-member-list">
-                {members.map((m) => {
-                  const name = m.user?.nickname || m.user?.username || m.userId
-                  const isMe = m.userId === currentUserId
-                  const isOwner = m.role === 'OWNER'
-                  return (
-                    <div className="group-profile-member" key={m.userId}>
-                      <div className="group-profile-member-avatar">
-                        <img src={avatars[m.userId] || FriendAvatar} alt={name} />
+              {/* Member list */}
+              <div className="group-profile-members">
+                <div className="group-profile-members-title">群成员（{members.length}）</div>
+                <div className="group-profile-member-list">
+                  {members.map((m) => {
+                    const name = m.user?.nickname || m.user?.username || m.userId
+                    const isMe = m.userId === currentUserId
+                    const isOwner = m.role === 'OWNER'
+                    return (
+                      <div className="group-profile-member" key={m.userId}>
+                        <div className="group-profile-member-avatar">
+                          <img src={avatars[m.userId] || FriendAvatar} alt={name} />
+                        </div>
+                        <div className="group-profile-member-name">
+                          {name}
+                          {isMe && <span className="group-profile-me">（我）</span>}
+                        </div>
+                        <span className={`group-profile-role ${isOwner ? 'is-owner' : ''}`}>
+                          {roleLabel(m.role)}
+                        </span>
                       </div>
-                      <div className="group-profile-member-name">
-                        {name}
-                        {isMe && <span className="group-profile-me">（我）</span>}
-                      </div>
-                      <span className={`group-profile-role ${isOwner ? 'is-owner' : ''}`}>
-                        {roleLabel(m.role)}
-                      </span>
-                    </div>
-                  )
-                })}
+                    )
+                  })}
+                </div>
               </div>
             </div>
 
@@ -179,34 +189,35 @@ const GroupProfileModal: React.FC<GroupProfileModalProps> = ({
       )}
 
       <style>{`
-        .group-profile-modal {
+        .group-profile-drawer-mask {
           position: fixed;
           inset: 0;
-          background-color: rgba(0, 0, 0, 0.55);
+          background-color: rgba(0, 0, 0, 0.46);
           display: flex;
-          align-items: center;
-          justify-content: center;
+          justify-content: flex-end;
           z-index: 1000;
         }
 
-        .group-profile-content {
-          width: 360px;
-          max-width: calc(100vw - 32px);
-          max-height: calc(100vh - 64px);
+        .group-profile-drawer {
+          width: min(420px, calc(100vw - 72px));
+          height: 100vh;
           display: flex;
           flex-direction: column;
           background-color: #1f2030;
-          border-radius: 16px;
-          padding: 20px 24px 24px;
+          border-left: 1px solid rgba(255, 255, 255, 0.08);
           color: #fff;
-          box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+          box-shadow: -18px 0 48px rgba(0, 0, 0, 0.42);
+          animation: group-profile-drawer-in 0.22s ease-out;
         }
 
         .group-profile-header {
+          height: 72px;
+          flex-shrink: 0;
           display: flex;
           align-items: center;
           justify-content: space-between;
-          margin-bottom: 12px;
+          padding: 0 24px;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.06);
         }
 
         .group-profile-header h2 {
@@ -237,15 +248,27 @@ const GroupProfileModal: React.FC<GroupProfileModalProps> = ({
         .group-profile-loading,
         .group-profile-error {
           text-align: center;
-          padding: 40px 0;
           color: #9aa0b4;
+        }
+
+        .group-profile-body {
+          flex: 1;
+          min-height: 0;
+          overflow-y: auto;
+          padding: 20px 24px 12px;
+        }
+
+        .group-profile-body.is-centered {
+          display: flex;
+          align-items: center;
+          justify-content: center;
         }
 
         .group-profile-avatar-section {
           display: flex;
           flex-direction: column;
           align-items: center;
-          padding: 8px 0 16px;
+          padding: 10px 0 22px;
         }
 
         .group-profile-avatar {
@@ -272,8 +295,6 @@ const GroupProfileModal: React.FC<GroupProfileModalProps> = ({
 
         .group-profile-members {
           border-top: 1px solid rgba(255, 255, 255, 0.06);
-          border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-          margin-bottom: 18px;
           display: flex;
           flex-direction: column;
           min-height: 0;
@@ -286,12 +307,10 @@ const GroupProfileModal: React.FC<GroupProfileModalProps> = ({
         }
 
         .group-profile-member-list {
-          max-height: 240px;
-          overflow-y: auto;
           display: flex;
           flex-direction: column;
           gap: 4px;
-          padding-bottom: 12px;
+          padding-bottom: 16px;
         }
 
         .group-profile-member {
@@ -347,8 +366,12 @@ const GroupProfileModal: React.FC<GroupProfileModalProps> = ({
         }
 
         .group-profile-actions {
+          flex-shrink: 0;
           display: flex;
           gap: 12px;
+          padding: 16px 24px 24px;
+          border-top: 1px solid rgba(255, 255, 255, 0.06);
+          background-color: #1f2030;
         }
 
         .group-profile-button {
@@ -384,6 +407,21 @@ const GroupProfileModal: React.FC<GroupProfileModalProps> = ({
         .group-profile-button.danger:hover:not(:disabled) {
           background-color: #ef4444;
           color: #fff;
+        }
+
+        @keyframes group-profile-drawer-in {
+          from {
+            transform: translateX(100%);
+          }
+          to {
+            transform: translateX(0);
+          }
+        }
+
+        @media (max-width: 768px) {
+          .group-profile-drawer {
+            width: min(86vw, 420px);
+          }
         }
       `}</style>
     </div>

@@ -459,6 +459,7 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
           roomId={chat.id}
           groupName={chat.name}
           memberCount={chat.memberCount}
+          onlineCount={chat.onlineCount}
           onClose={() => setShowGroupProfile(false)}
           onLeft={() => setShowGroupProfile(false)}
         />

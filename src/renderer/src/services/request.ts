@@ -176,7 +176,6 @@ class RequestService {
       } else if (response.code === 429) {
         showRateLimitNotice(response.message)
       }
-
       return response
     } catch (error: unknown) {
       console.error('[IPC Request] Error:', error)

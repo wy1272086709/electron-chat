@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { DeleteOutlined, LoadingOutlined } from '@ant-design/icons'
 import {
   favoriteService,
   toFavoriteApiType,
@@ -58,29 +59,14 @@ function formatFavoriteTime(time: string): string {
   const date = new Date(time)
   if (Number.isNaN(date.getTime())) return time
 
-  const now = new Date()
-  const sameDay =
-    date.getFullYear() === now.getFullYear() &&
-    date.getMonth() === now.getMonth() &&
-    date.getDate() === now.getDate()
-
-  if (sameDay) return '今天'
-
-  return date.toLocaleDateString('zh-CN', {
-    year: date.getFullYear() === now.getFullYear() ? undefined : 'numeric',
-    month: 'numeric',
-    day: 'numeric'
-  })
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}/${month}/${day}`
 }
 
 function formatSourceDate(time: string): string {
-  const date = new Date(time)
-  if (Number.isNaN(date.getTime())) return time
-  return date.toLocaleDateString('zh-CN', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric'
-  })
+  return formatFavoriteTime(time)
 }
 
 function isExpired(time?: string): boolean {
@@ -165,6 +151,7 @@ const Favorites: React.FC = () => {
   const [loading, setLoading] = useState(false)
   const [hasMore, setHasMore] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [deletingIds, setDeletingIds] = useState<Set<string>>(() => new Set())
   const listRef = useRef<HTMLDivElement>(null)
   const loadMoreRef = useRef<HTMLDivElement>(null)
   const requestSeqRef = useRef(0)
@@ -298,6 +285,33 @@ const Favorites: React.FC = () => {
     setSelectedFavorite(null)
   }
 
+  const handleDelete = async (favorite: FavoriteItem): Promise<void> => {
+    if (deletingIds.has(favorite.id)) return
+    if (!window.confirm('确定要删除这条收藏吗？')) return
+
+    setDeletingIds((current) => new Set(current).add(favorite.id))
+    setError(null)
+
+    try {
+      const response = await favoriteService.remove(favorite.apiType, favorite.targetId)
+      if (!response.result) {
+        setError(response.message || '删除收藏失败')
+        return
+      }
+
+      setFavorites((current) => current.filter((item) => item.id !== favorite.id))
+      setSelectedFavorite((current) => (current?.id === favorite.id ? null : current))
+    } catch {
+      setError('删除收藏失败，请稍后重试')
+    } finally {
+      setDeletingIds((current) => {
+        const next = new Set(current)
+        next.delete(favorite.id)
+        return next
+      })
+    }
+  }
+
   return (
     <div className="favorites-panel">
       <aside className="favorites-sidebar" aria-label="收藏分类">
@@ -339,6 +353,19 @@ const Favorites: React.FC = () => {
                   }`}
                   onClick={() => setSelectedFavorite(favorite)}
                 >
+                  <button
+                    className="favorite-card-delete"
+                    type="button"
+                    aria-label="删除收藏"
+                    title="删除收藏"
+                    disabled={deletingIds.has(favorite.id)}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      void handleDelete(favorite)
+                    }}
+                  >
+                    {deletingIds.has(favorite.id) ? <LoadingOutlined spin /> : <DeleteOutlined />}
+                  </button>
                   <div className="favorite-card-main">
                     {favorite.type === 'image' && <FavoriteImageThumb favorite={favorite} />}
                     <div className="favorite-text">

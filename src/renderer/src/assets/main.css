@@ -854,6 +854,54 @@
   transform: translateY(-1px);
 }
 
+.favorite-card-delete {
+  position: absolute;
+  z-index: 2;
+  top: 12px;
+  right: 12px;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 6px;
+  background: rgba(30, 31, 46, 0.82);
+  color: #b9bac6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(-2px);
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease,
+    background-color 0.18s ease,
+    color 0.18s ease;
+}
+
+.favorite-card:hover .favorite-card-delete,
+.favorite-card-delete:focus-visible,
+.favorite-card-delete:disabled {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.favorite-card-delete:hover:not(:disabled) {
+  background: #4b2630;
+  color: #ff8c99;
+}
+
+.favorite-card-delete:disabled {
+  cursor: wait;
+}
+
+@media (hover: none) {
+  .favorite-card-delete {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .favorite-card-main {
   min-width: 0;
   display: flex;

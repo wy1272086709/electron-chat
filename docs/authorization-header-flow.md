@@ -37,3 +37,7 @@ Authorization: <token>
 - 用户信息
 
 token 必须来自响应头 `Authorization`。即使登录响应体仍返回 `access_token`，前端也不会主动使用它覆盖本地 token。
+
+## 邮件发送
+
+验证码邮件建议由后端通过 RabbitMQ 异步发送，前端接口保持调用 `/users/sendEmail` 不变。详细设计见 [email-rabbitmq-queue-design.md](./email-rabbitmq-queue-design.md)。
