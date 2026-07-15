@@ -57,9 +57,10 @@ const NOTIFICATION_SOCKET_EVENTS = [
   'group:inviteHandled'
 ] as const
 
-/** 等待服务端 ack 的超时时间（ms）；超时未回执则把消息标记为 failed，提示用户重发 */
-const SEND_ACK_TIMEOUT_MS = 8000
+/** 部分后端只广播 message:new、不调用 ack；短暂等待后结束 UI 转圈并主动增量同步。 */
+const SEND_ACK_GRACE_MS = 1500
 const SEND_RETRY_DELAY_MS = 1200
+const SEND_BACKGROUND_VERIFY_DELAY_MS = 8000
 const SEND_MAX_RETRY_COUNT = 3
 const SYNC_PAGE_SIZE = 100
 const RELIABLE_STATE_KEY_PREFIX = 'reliable_chat_state_v1'
@@ -254,6 +255,7 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [mobileDetailOpen, setMobileDetailOpen] = useState(false)
   const [clearedChat, setClearedChat] = useState<string | null>(null)
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
+  const [authInitialized, setAuthInitialized] = useState(false)
   const [socket, setSocket] = useState<Socket | null>(null)
   const [chats, setChats] = useState<LayoutChat[]>([])
   const [messages, setMessages] = useState<LayoutMessage[]>([])
@@ -701,11 +703,16 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
 
       return new Promise((resolve, reject) => {
-        const handleAck = (err: Error | null, ack?: SendAckResponse): void => {
-          if (err) {
-            reject(err)
-            return
-          }
+        let settled = false
+        const timer = window.setTimeout(() => {
+          if (settled) return
+          settled = true
+          resolve(null)
+        }, SEND_ACK_GRACE_MS)
+        const handleAck = (ack?: SendAckResponse): void => {
+          if (settled) return
+          settled = true
+          window.clearTimeout(timer)
           if (ack?.result === false) {
             reject(new Error(ack.message || '消息发送失败'))
             return
@@ -714,20 +721,18 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
 
         if (chat.type === 'group') {
-          sock
-            .timeout(SEND_ACK_TIMEOUT_MS)
-            .emit('message:sendRoom', { roomId: item.chatId, ...basePayload }, handleAck)
+          sock.emit('message:sendRoom', { roomId: item.chatId, ...basePayload }, handleAck)
           return
         }
 
         const receiverId = item.receiverId || chat.peerUserId
         if (!receiverId) {
+          settled = true
+          window.clearTimeout(timer)
           reject(new Error('缺少私聊接收方，无法发送'))
           return
         }
-        sock
-          .timeout(SEND_ACK_TIMEOUT_MS)
-          .emit('message:sendPrivate', { receiverId, ...basePayload }, handleAck)
+        sock.emit('message:sendPrivate', { receiverId, ...basePayload }, handleAck)
       })
     },
     []
@@ -749,6 +754,7 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     flushingPendingRef.current = true
     let shouldRetryLater = false
+    let shouldVerifyLater = false
 
     try {
       for (const queued of [...pendingQueueRef.current]) {
@@ -764,12 +770,18 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           retryCount: nextRetryCount
         }
         updatePendingMessage(latest.clientMessageId, sending)
-        setLocalMessageStatusByClientId(
-          latest.clientMessageId,
-          'sending',
-          undefined,
-          latest.localId
+        const alreadyOptimisticallySent = messagesRef.current.some(
+          (message) =>
+            message.clientMessageId === latest.clientMessageId && message.status === 'sent'
         )
+        if (!alreadyOptimisticallySent) {
+          setLocalMessageStatusByClientId(
+            latest.clientMessageId,
+            'sending',
+            undefined,
+            latest.localId
+          )
+        }
 
         try {
           const serverMessage = await emitPendingWithAck(sending)
@@ -779,8 +791,6 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
               markDelivered: true
             })
           } else {
-            removePendingByClientMessageId(sending.clientMessageId)
-            pendingFilesRef.current.delete(sending.localId)
             setLocalMessageStatusByClientId(
               sending.clientMessageId,
               'sent',
@@ -788,6 +798,28 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
               sending.localId
             )
             scheduleConversationRefresh(currentUserIdRef.current)
+            await syncRoomMessages(sending.chatId)
+
+            const stillPending = pendingQueueRef.current.some(
+              (item) => item.clientMessageId === sending.clientMessageId
+            )
+            if (!stillPending) continue
+
+            const failed = nextRetryCount >= SEND_MAX_RETRY_COUNT
+            updatePendingMessage(sending.clientMessageId, {
+              status: failed ? 'failed' : 'pending',
+              retryCount: nextRetryCount
+            })
+            if (failed) {
+              setLocalMessageStatusByClientId(
+                sending.clientMessageId,
+                'failed',
+                '未收到服务端确认，请点击重试',
+                sending.localId
+              )
+            } else {
+              shouldVerifyLater = true
+            }
           }
         } catch (error) {
           const message = error instanceof Error ? error.message : '消息发送失败'
@@ -811,13 +843,15 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     if (shouldRetryLater) {
       schedulePendingFlush(SEND_RETRY_DELAY_MS)
+    } else if (shouldVerifyLater) {
+      schedulePendingFlush(SEND_BACKGROUND_VERIFY_DELAY_MS)
     }
   }, [
     emitPendingWithAck,
-    removePendingByClientMessageId,
     scheduleConversationRefresh,
     schedulePendingFlush,
     setLocalMessageStatusByClientId,
+    syncRoomMessages,
     updatePendingMessage,
     upsertServerMessage
   ])
@@ -877,6 +911,7 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         roomCursorsRef.current = reliableState.roomCursors || {}
       }
       setCurrentUserId(meId)
+      setAuthInitialized(true)
       await Promise.all([loadConversations(meId), loadNotifications()])
       schedulePendingFlush()
     })()
@@ -901,6 +936,7 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     let active = true
 
     ;(async () => {
+      if (!authInitialized) return
       const token = await secureStorageService.getAccessToken()
       const user = await secureStorageService.getUserInfo()
       meId = user?.id ?? currentUserId
@@ -924,12 +960,13 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
       socket.on('connect', () => {
         console.log('[Socket] connected:', socket?.id)
+        // 新消息优先发送；全量会话同步可能较慢，不能阻塞刚登录后的 pending 队列。
+        schedulePendingFlush()
         void (async () => {
           const list = await loadConversations(meId)
           for (const chat of list) {
             await syncRoomMessages(chat.id)
           }
-          schedulePendingFlush()
         })()
       })
       socket.on('disconnect', (reason) => console.log('[Socket] disconnected:', reason))
@@ -1032,6 +1069,7 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setSocket(null)
     }
   }, [
+    authInitialized,
     currentUserId,
     loadConversations,
     applyPresenceUpdate,
