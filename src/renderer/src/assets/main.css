@@ -337,6 +337,13 @@
 }
 
 /* Messages Area */
+.chat-detail {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .messages-container {
   flex: 1;
   overflow-y: auto;
@@ -610,6 +617,227 @@
   color: white;
 }
 
+.input-action-button.ai-action-button.active {
+  background-color: rgba(99, 102, 241, 0.2);
+  color: #a5b4fc;
+}
+
+/* AI assistant panel */
+.chat-ai-panel {
+  margin: 0 16px 12px;
+  border: 1px solid #3a3b4d;
+  border-radius: 8px;
+  background: #252635;
+  box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.22);
+  color: #f4f4f5;
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+
+.chat-ai-header,
+.chat-ai-footer {
+  min-height: 44px;
+  padding: 0 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.chat-ai-header {
+  border-bottom: 1px solid #363747;
+}
+
+.chat-ai-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.chat-ai-title svg {
+  color: #a5b4fc;
+}
+
+.chat-ai-icon-button,
+.chat-ai-footer button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: #a1a1aa;
+  cursor: pointer;
+}
+
+.chat-ai-icon-button {
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+}
+
+.chat-ai-icon-button:hover,
+.chat-ai-footer button:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.chat-ai-tabs {
+  padding: 10px 14px 0;
+  display: flex;
+  gap: 6px;
+}
+
+.chat-ai-tabs button {
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 6px;
+  color: #a1a1aa;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.chat-ai-tabs button:hover {
+  color: #fff;
+}
+
+.chat-ai-tabs button.active {
+  background: #3b3d52;
+  color: #fff;
+}
+
+.chat-ai-content {
+  min-height: 112px;
+  max-height: 260px;
+  padding: 12px 14px;
+  overflow-y: auto;
+}
+
+.chat-ai-state {
+  min-height: 88px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: #a1a1aa;
+  font-size: 13px;
+}
+
+.chat-ai-state.is-error {
+  flex-direction: column;
+  color: #fca5a5;
+}
+
+.chat-ai-state.is-empty {
+  flex-direction: column;
+  text-align: center;
+}
+
+.chat-ai-state button {
+  padding: 7px 10px;
+  border-radius: 6px;
+  background: #3b3d52;
+  color: #fff;
+  cursor: pointer;
+}
+
+.chat-ai-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid #525467;
+  border-top-color: #a5b4fc;
+  border-radius: 50%;
+  animation: message-media-spin 0.8s linear infinite;
+}
+
+.chat-ai-summary {
+  font-size: 13px;
+  line-height: 1.65;
+  color: #e4e4e7;
+}
+
+.chat-ai-summary p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.chat-ai-summary h4 {
+  margin: 12px 0 4px;
+  font-size: 13px;
+  color: #fff;
+}
+
+.chat-ai-summary ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.chat-ai-suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chat-ai-suggestion {
+  width: 100%;
+  min-height: 40px;
+  padding: 9px 11px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #414356;
+  border-radius: 6px;
+  color: #e4e4e7;
+  font-size: 13px;
+  line-height: 1.45;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chat-ai-suggestion:hover {
+  border-color: #6366f1;
+  background: rgba(99, 102, 241, 0.1);
+}
+
+.chat-ai-suggestion svg {
+  flex: 0 0 auto;
+  color: #a5b4fc;
+}
+
+.chat-ai-footer {
+  border-top: 1px solid #363747;
+  color: #71717a;
+  font-size: 12px;
+}
+
+.chat-ai-footer > div {
+  display: flex;
+  gap: 4px;
+}
+
+.chat-ai-footer button {
+  min-height: 30px;
+  padding: 0 8px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+@media (max-width: 768px) {
+  .chat-ai-panel {
+    margin: 0 8px 8px;
+  }
+
+  .chat-ai-content {
+    max-height: 220px;
+  }
+
+  .message-input-container {
+    padding-left: 10px;
+    padding-right: 10px;
+    gap: 6px;
+  }
+}
+
 .message-input {
   flex: 1;
   height: 36px;
@@ -804,7 +1032,7 @@
 }
 
 .favorites-content-header {
-  height: 112px;
+  height: 62px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -813,13 +1041,11 @@
   background: #1f202d;
 }
 
-.favorites-content-header h2 {
-  margin: 0;
+.favorites-content-header span {
   color: white;
-  font-size: 36px;
-  line-height: 1.2;
-  font-weight: 700;
+  font-size: 20px;
 }
+
 
 .favorites-list {
   flex: 1;
@@ -1403,8 +1629,8 @@
     padding: 0 16px;
   }
 
-  .favorites-content-header h2 {
-    font-size: 22px;
+  .favorites-content-header span {
+    font-size: 16px;
   }
 
   .favorites-list {

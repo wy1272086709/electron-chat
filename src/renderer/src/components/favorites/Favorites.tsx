@@ -375,7 +375,7 @@ const Favorites: React.FC = () => {
 
       <section className="favorites-content">
         <header className="favorites-content-header">
-          <h2>{currentTabLabel}</h2>
+          <span>{currentTabLabel}</span>
         </header>
 
         <div className="favorites-list" ref={listRef} onScroll={handleListScroll}>

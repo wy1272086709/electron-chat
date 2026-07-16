@@ -64,6 +64,7 @@ const ChatRoute: React.FC<ChatRouteProps> = ({ type }) => {
       <div className={`right-panel ${mobileDetailOpen ? 'active' : ''}`}>
         {selectedChat ? (
           <ChatDetail
+            key={selectedChat}
             chat={selectedChatDetail}
             messages={messages.filter((m) => m.chatId === selectedChat)}
             onBack={handleBackToList}

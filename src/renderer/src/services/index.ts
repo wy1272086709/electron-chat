@@ -15,6 +15,7 @@ export type { STORAGE_KEYS } from './secure-storage.service'
 // 业务服务
 export { authService } from './auth.service'
 export { chatService } from './chat.service'
+export { chatAiService } from './chat-ai.service'
 export { userService } from './user.service'
 export { notificationService } from './notification.service'
 
@@ -25,7 +26,7 @@ export type {
   ApiError,
   RequestConfig as ApiRequestConfig,
   TokenInfo,
-  UserInfo,
+  UserInfo
 } from '../types/api.types'
 
 export type {
@@ -36,7 +37,7 @@ export type {
   GetMessagesParams,
   ChatType,
   MessageType,
-  MessageStatus,
+  MessageStatus
 } from '../types/chat.types'
 
 // 服务类型导出

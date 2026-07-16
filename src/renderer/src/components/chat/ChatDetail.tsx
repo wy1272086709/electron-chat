@@ -13,6 +13,9 @@ import { isImageFile } from '@renderer/utils/file-meta'
 import { favoriteService } from '@renderer/services/favorite.service'
 import FriendProfileModal from '@renderer/components/contacts/FriendProfileModal'
 import GroupProfileModal from '@renderer/components/groups/GroupProfileModal'
+import ChatAiPanel from '@renderer/components/chat/ChatAiPanel'
+import { RobotOutlined } from '@ant-design/icons'
+import type { ChatAiMode } from '@renderer/types/chat-ai.types'
 
 interface Chat {
   id: string
@@ -105,6 +108,8 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
   const [profileUserId, setProfileUserId] = useState<string | null>(null)
   // 群聊信息弹窗：群聊顶部点击头像/昵称或「更多」按钮打开
   const [showGroupProfile, setShowGroupProfile] = useState(false)
+  const [showAiPanel, setShowAiPanel] = useState(false)
+  const [aiMode, setAiMode] = useState<ChatAiMode>('summary')
 
   const scrollToBottom: () => void = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -154,6 +159,12 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
   const handleEmojiSelect = (emoji: string): void => {
     setNewMessage((prev) => prev + emoji)
     setShowEmojiPicker(false)
+  }
+
+  const handleUseAiSuggestion = (suggestion: string): void => {
+    setNewMessage(suggestion)
+    setShowAiPanel(false)
+    showToast('回复建议已填入输入框')
   }
 
   // 选图：弹预览（带备注）；文件直接发送。重置 value 以便重复选同一文件。
@@ -558,8 +569,29 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
         <div ref={messagesEndRef} />
       </div>
 
+      {showAiPanel && (
+        <ChatAiPanel
+          roomId={chat.id}
+          draft={newMessage}
+          mode={aiMode}
+          onModeChange={setAiMode}
+          onUseSuggestion={handleUseAiSuggestion}
+          onClose={() => setShowAiPanel(false)}
+          onFeedback={showToast}
+        />
+      )}
+
       {/* Message Input */}
       <div className="message-input-container">
+        <button
+          type="button"
+          className={`input-action-button ai-action-button ${showAiPanel ? 'active' : ''}`}
+          title="AI 聊天助手"
+          aria-pressed={showAiPanel}
+          onClick={() => setShowAiPanel((visible) => !visible)}
+        >
+          <RobotOutlined />
+        </button>
         <button
           className="input-action-button"
           title="表情"
@@ -780,11 +812,6 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
             max-height: 44px;
             border-radius: 5px;
           }
-        }
-        .message-input-container {
-          position: absolute;
-          bottom: 0;
-          width: calc(100% - 360px);
         }
 
         .message-feedback-toast {
