@@ -1580,6 +1580,22 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const friendChats = useMemo(() => chats.filter((c) => c.type === 'chat'), [chats])
   const groupChats = useMemo(() => chats.filter((c) => c.type === 'group'), [chats])
+
+  // 会话被退出、删除或由服务端移除后，自动选中当前面板的第一项。
+  // 同一规则也覆盖首次加载及切换到尚未选中过会话的面板。
+  useEffect(() => {
+    if (activePanel !== 'chat' && activePanel !== 'groups') return
+
+    const panelChats = activePanel === 'chat' ? friendChats : groupChats
+    const currentIsAvailable = panelChats.some((chat) => chat.id === selectedChatRef.current)
+    if (currentIsAvailable) return
+
+    const fallbackChatId = panelChats[0]?.id ?? null
+    lastSelectedChatByPanelRef.current[activePanel] = fallbackChatId
+    selectedChatRef.current = fallbackChatId
+    setSelectedChat(fallbackChatId)
+  }, [activePanel, friendChats, groupChats])
+
   const unreadCount = useMemo(
     () => chats.reduce((total, chat) => total + (chat.unread || 0), 0),
     [chats]

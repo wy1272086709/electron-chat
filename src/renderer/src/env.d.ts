@@ -34,6 +34,12 @@ declare global {
         code: number
         message?: string
       }>
+      copyImageToClipboard: (payload: { url: string }) => Promise<{
+        result: boolean
+        data: null
+        code: number
+        message?: string
+      }>
       onTransferProgress: (callback: (payload: FileTransferProgress) => void) => () => void
       openLocalFile: (payload: { path: string }) => Promise<{
         result: boolean

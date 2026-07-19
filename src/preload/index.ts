@@ -52,6 +52,9 @@ if (process.contextIsolated) {
       // 媒体下载：流式写入系统下载目录
       downloadFile: (payload: { previewUrl: string; fileName: string; transferId?: string }) =>
         ipcRenderer.invoke('download-file', payload),
+      // 复制图片到系统剪贴板（主进程绕过 CORS 拉取后写入）
+      copyImageToClipboard: (payload: { url: string }) =>
+        ipcRenderer.invoke('copy-image-to-clipboard', payload),
       onTransferProgress: (
         callback: (payload: {
           transferId: string

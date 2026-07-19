@@ -1,4 +1,14 @@
-import { app, BrowserWindow, ipcMain, shell, dialog, safeStorage, globalShortcut } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  ipcMain,
+  shell,
+  dialog,
+  safeStorage,
+  globalShortcut,
+  clipboard,
+  nativeImage
+} from 'electron'
 import { join, parse, resolve, sep } from 'path'
 import { createReadStream, createWriteStream, existsSync, mkdirSync, statSync } from 'fs'
 import { pipeline } from 'stream/promises'
@@ -482,6 +492,28 @@ app.whenReady().then(() => {
       }
     }
   )
+
+  // 复制图片到系统剪贴板：主进程拉取远程预签名图片字节（无 CORS 限制），
+  // 转 nativeImage 后写入剪贴板。粘贴时渲染层 handlePaste 会识别为 image 文件。
+  ipcMain.handle('copy-image-to-clipboard', async (_event, payload: { url: string }) => {
+    try {
+      const response = await transferClient.get(payload.url, {
+        responseType: 'arraybuffer',
+        timeout: 0
+      })
+      const image = nativeImage.createFromBuffer(Buffer.from(response.data as ArrayBuffer))
+      if (image.isEmpty()) {
+        return { result: false, data: null, code: 1, message: '图片解析失败' }
+      }
+      clipboard.writeImage(image)
+      return { result: true, data: null, code: 0, message: '已复制' }
+    } catch (error) {
+      console.error('[主进程] 复制图片失败:', error)
+      const code = axios.isAxiosError(error) ? error.response?.status || 1 : 1
+      const message = error instanceof Error ? error.message : '复制失败'
+      return { result: false, data: null, code, message }
+    }
+  })
 
   ipcMain.handle('open-local-file', async (_event, payload: { path: string }) => {
     try {

@@ -237,6 +237,28 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
     showToast(res.result ? '已保存到下载目录' : res.message || '保存失败')
   }
 
+  // 复制图片：解析预签名 URL 后交主进程写入系统剪贴板（绕过渲染层 CORS），
+  // 之后在输入框粘贴即可被 handlePaste 识别为图片文件进入预览。
+  const handleCopyImage = async (message: Message): Promise<void> => {
+    const objectName = message.attachment?.objectName
+    if (!objectName) {
+      showToast('图片暂不可复制')
+      return
+    }
+    try {
+      const previewUrl = await resolveMediaUrl(objectName)
+      if (!previewUrl) {
+        showToast('图片加载失败')
+        return
+      }
+      const res = await window.electronAPI.copyImageToClipboard({ url: previewUrl })
+      showToast(res.result ? '图片已复制，可粘贴到输入框' : res.message || '复制失败')
+    } catch (error) {
+      console.warn('[ChatDetail] 复制图片失败:', error)
+      showToast('复制失败')
+    }
+  }
+
   // 操作反馈轻提示（复制 / 收藏等）：覆盖式显示，由上方 effect 在 1.5s 后自动清除
   const showToast = (text: string): void => {
     setFeedback(text)
@@ -268,6 +290,10 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
   }
 
   const handleCopyMessage = (message: Message): void => {
+    if (message.messageType === 'IMAGE') {
+      void handleCopyImage(message)
+      return
+    }
     copyText(message.content).then((ok) => showToast(ok ? '已复制' : '复制失败'))
   }
 
@@ -364,7 +390,7 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
         onClick: () => handleToggleFavorite(message)
       }
     ]
-    // 图片消息额外提供「另存为」（下载到本地下载目录）
+    // 图片消息的统一「复制」入口已复制图片，这里只额外提供「另存为」
     if (message.messageType === 'IMAGE' && message.attachment?.objectName) {
       items.push({
         key: 'save',
