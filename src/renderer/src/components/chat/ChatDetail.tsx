@@ -14,8 +14,9 @@ import { favoriteService } from '@renderer/services/favorite.service'
 import FriendProfileModal from '@renderer/components/contacts/FriendProfileModal'
 import GroupProfileModal from '@renderer/components/groups/GroupProfileModal'
 import ChatAiPanel from '@renderer/components/chat/ChatAiPanel'
-import { RobotOutlined } from '@ant-design/icons'
+import { ExclamationCircleFilled, RobotOutlined } from '@ant-design/icons'
 import type { ChatAiMode } from '@renderer/types/chat-ai.types'
+import { MODERATED_MESSAGE_PLACEHOLDER } from '@renderer/context/layoutContext.helpers'
 
 interface Chat {
   id: string
@@ -519,6 +520,7 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
           const mediaClass = hasMedia
             ? `has-media ${mediaLooksLikeImage ? 'is-image' : 'is-file'}`
             : ''
+          const isModerated = message.content === MODERATED_MESSAGE_PLACEHOLDER
           return (
             <div
               key={message.id}
@@ -535,6 +537,11 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
                     }}
                   />
                 </div>
+              )}
+              {message.sender === 'other' && isModerated && (
+                <span className="message-moderation-warning" title="敏感内容" aria-label="敏感内容">
+                  <ExclamationCircleFilled />
+                </span>
               )}
               <div className="message-body">
                 {isGroup && message.sender === 'other' && (
@@ -556,6 +563,11 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
                   )}
                 </div>
               </div>
+              {message.sender === 'me' && isModerated && (
+                <span className="message-moderation-warning" title="敏感内容" aria-label="敏感内容">
+                  <ExclamationCircleFilled />
+                </span>
+              )}
               {message.sender === 'me' &&
                 (message.status === 'pending' ||
                   message.status === 'sending' ||
@@ -790,6 +802,17 @@ const ChatDetail: React.FC<ChatDetailProps> = ({
           align-self: flex-end;
           margin-bottom: 4px;
           margin-right: 4px;
+          flex-shrink: 0;
+        }
+
+        .message-moderation-warning {
+          display: inline-flex;
+          align-items: center;
+          align-self: center;
+          margin: 0 8px;
+          color: #f59e0b;
+          font-size: 18px;
+          line-height: 1;
           flex-shrink: 0;
         }
 

@@ -153,6 +153,7 @@ export interface Conversation {
     senderId: string
     createdAt: string
     sender?: ChatUserBrief
+    moderationStatus?: string | null
   } | null
   unreadCount?: number
 }
@@ -186,6 +187,8 @@ export interface ChatMessage {
   mediaHeight?: number | null
   duration?: number | null
   isDeleted?: boolean
+  moderationStatus?: string | null
+  moderatedAt?: string | null
   createdAt: string
   sender?: ChatUserBrief
 }

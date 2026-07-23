@@ -25,6 +25,7 @@ token 来自 `secureStorageService.getAccessToken()`。
 | `chat:error`                         | 连接或鉴权异常   | 打印错误日志                                           |
 | `message:new`                        | 新消息到达       | 更新会话预览、未读数；当前打开房间时追加消息并标记已读 |
 | `message:sent`                       | 发送成功回执     | 刷新会话列表                                           |
+| `message:moderated`                  | 敏感消息已屏蔽   | 将对应消息原位替换为“该消息涉及敏感言论，无法展示”       |
 | `room:created`                       | 新群聊创建       | 刷新会话列表                                           |
 | `room:private`                       | 私聊创建或复用   | 刷新会话列表                                           |
 | `room:read`                          | 房间已读状态变化 | 刷新会话列表和未读数                                   |

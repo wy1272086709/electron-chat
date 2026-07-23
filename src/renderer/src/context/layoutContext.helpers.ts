@@ -12,6 +12,18 @@ import type { StartChatFriendSnapshot } from './layoutContext.types'
 const LEGACY_FILE_MESSAGE_RE = /^\[文件:\s*(.+?)\]$/
 const LEGACY_IMAGE_MESSAGE_RE = /^\[图片:\s*(.+?)\]$/
 
+export const MODERATED_MESSAGE_PLACEHOLDER = '该消息涉及敏感言论，无法展示'
+const LEGACY_MODERATED_MESSAGE_PLACEHOLDERS = new Set(['该消息违规，已被屏蔽，请文明发言！'])
+
+export const getVisibleMessageContent = (
+  content: string | undefined | null,
+  moderationStatus?: string | null
+): string =>
+  moderationStatus?.toUpperCase() === 'REJECTED' ||
+  (content ? LEGACY_MODERATED_MESSAGE_PLACEHOLDERS.has(content) : false)
+    ? MODERATED_MESSAGE_PLACEHOLDER
+    : content || ''
+
 type PresenceSource = {
   isOnline?: boolean | null
   online?: boolean | null
@@ -64,10 +76,11 @@ export const mapConversation = (c: Conversation, meId: string | null): LayoutCha
   const peerMember = c.room.members?.find((m) => m.userId !== meId)
   const peer = peerMember?.user
   const lm = c.lastMessage
+  const lastMessageContent = getVisibleMessageContent(lm?.content, lm?.moderationStatus)
   const senderNick = lm?.sender?.nickname || lm?.sender?.username
   const preview = buildLastMessagePreview(
     lm?.messageType,
-    lm?.content,
+    lastMessageContent,
     lm?.fileName || undefined,
     !isPrivate,
     senderNick
@@ -212,6 +225,7 @@ export const mapServerMessage = async (
   m: ServerMessage,
   meId: string | null
 ): Promise<LayoutMessage> => {
+  const visibleContent = getVisibleMessageContent(m.content, m.moderationStatus)
   const senderAvatar = await resolveAvatarUrl(m.sender?.avatarUrl)
   const upperType = m.messageType?.toUpperCase()
   const legacyFileName = m.content?.match(LEGACY_FILE_MESSAGE_RE)?.[1]
@@ -244,7 +258,7 @@ export const mapServerMessage = async (
     id: m.id,
     clientMessageId: m.clientMessageId || undefined,
     chatId: m.roomId,
-    content: legacyFileName || legacyImageName ? '' : m.content || '',
+    content: legacyFileName || legacyImageName ? '' : visibleContent,
     createdAt: m.createdAt,
     time: formatHM(m.createdAt),
     sender: m.senderId === meId ? 'me' : 'other',
